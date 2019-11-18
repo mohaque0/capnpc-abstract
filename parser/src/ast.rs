@@ -42,7 +42,7 @@ pub struct Node {
 
 pub mod node {
     use getset::{Getters, CopyGetters, Setters};
-    use crate::parser::ast;
+    use crate::ast;
 
     #[derive(Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
     pub struct NestedNode {

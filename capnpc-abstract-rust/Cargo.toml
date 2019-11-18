@@ -1,0 +1,13 @@
+[package]
+name = "capnpc-abstract-rust"
+version = "0.1.0"
+authors = ["mohaque <44129090+mohaque0@users.noreply.github.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+capnp = "0.10.1"
+derive_more = "0.15.0"
+getset = { git = "https://github.com/Hoverbear/getset", rev = "925910dc10538d4995dcae9359b983dd48880476" }
+parser = { path = "../parser" }

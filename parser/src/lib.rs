@@ -1,6 +1,10 @@
-pub mod ast;
+extern crate capnp;
+#[macro_use] extern crate derive_more;
+extern crate getset;
 
-use crate::schema_capnp;
+pub mod ast;
+#[allow(dead_code)]
+mod schema_capnp;
 
 trait ParseFrom<R> : Sized {
     fn parse(reader: R) -> capnp::Result<Self>;
@@ -140,4 +144,10 @@ impl ParseFrom<schema_capnp::code_generator_request::Reader<'_>> for ast::CodeGe
 
 pub fn parse(request: schema_capnp::code_generator_request::Reader) -> capnp::Result<ast::CodeGeneratorRequest> {
     return ast::CodeGeneratorRequest::parse(request);
+}
+
+pub fn read_message(mut reader: &mut dyn std::io::Read) -> ast::CodeGeneratorRequest {
+    let msg_raw = capnp::serialize::read_message(&mut reader, capnp::message::ReaderOptions::new()).unwrap();
+    let msg_capnp = msg_raw.get_root::<schema_capnp::code_generator_request::Reader>().unwrap();
+    return parse(msg_capnp).unwrap();
 }
