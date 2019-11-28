@@ -9,6 +9,6 @@ edition = "2018"
 [dependencies]
 capnp = "0.10.1"
 derive_more = "0.15.0"
-getset = { git = "https://github.com/Hoverbear/getset", rev = "925910dc10538d4995dcae9359b983dd48880476" }
+getset = "0.0.9"
 multimap = "0.8.0"
 parser = { path = "../parser" }
