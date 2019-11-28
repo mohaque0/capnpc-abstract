@@ -6,11 +6,15 @@ extern crate parser;
 
 mod rust;
 
-fn main() {
-    let capnp_ast = parser::read_message(&mut std::io::stdin());
-    let rust_ast = rust::translate(&capnp_ast);
+use std::fs::File;
+use std::io::{Write, Error};
 
-    //println!("{:#?}", capnp_ast);
-    println!("{:#?}", rust_ast);
-    println!("{}", rust::to_code(&rust_ast));
+fn main() -> Result<(), Error> {
+    let capnp_ast = parser::read_message(&mut std::io::stdin());
+
+    let mut output = File::create("lib.rs")?;
+    let code = rust::code_gen(&capnp_ast);
+    write!(output, "{}", code)?;
+
+    Ok(())
 }

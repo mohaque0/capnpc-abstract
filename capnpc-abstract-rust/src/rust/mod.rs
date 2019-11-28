@@ -4,8 +4,8 @@ use ast::Resolver;
 use ast::Translator;
 use ast::ToCode;
 
-pub fn translate(ast: &crate::parser::ast::CodeGeneratorRequest) -> ast::RustAst {
-    let translated = ast::RustAst::translate(&ast::TranslationContext::new(), &ast);
+fn translate(cgr: &crate::parser::ast::CodeGeneratorRequest) -> ast::RustAst {
+    let translated = ast::RustAst::translate(&ast::TranslationContext::new(), &cgr);
 
     let mut resolution_context = ast::ResolutionContext::new();
     ast::RustAst::build_context(&mut resolution_context, &translated);
@@ -17,6 +17,10 @@ pub fn translate(ast: &crate::parser::ast::CodeGeneratorRequest) -> ast::RustAst
     return resolved;
 }
 
-pub fn to_code(ast: &ast::RustAst) -> String {
+fn to_code(ast: &ast::RustAst) -> String {
     return ast.to_code();
+}
+
+pub fn code_gen(cgr: &crate::parser::ast::CodeGeneratorRequest) -> String {
+    return to_code(&translate(&cgr));
 }
