@@ -56,6 +56,7 @@ impl ParseFrom<schema_capnp::field::Reader<'_>> for ast::Field {
         Ok(
             ast::Field::new(
                 String::from(reader.get_name()?),
+                reader.get_discriminant_value(),
                 ast::field::Which::parse(reader.which()?)?
             )
         )

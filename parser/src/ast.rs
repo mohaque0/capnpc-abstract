@@ -1,13 +1,14 @@
 use getset::{Getters, CopyGetters, Setters};
 
-#[derive(Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[derive(Clone, Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[get = "pub"]
 pub struct CodeGeneratorRequest {
     nodes: Vec<Node>
 }
 
 type Id = u64;
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Type {
     Void,
     Bool,
@@ -30,13 +31,24 @@ pub enum Type {
     AnyPointer
 }
 
-#[derive(Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[derive(Clone, Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
 pub struct Node {
+    #[get_copy = "pub"]
     id: Id,
+
+    #[get = "pub"]
     display_name: String,
+
+    #[get_copy = "pub"]
     display_name_prefix_length: usize,
+
+    #[get_copy = "pub"]
     scope_id: Id,
+
+    #[get = "pub"]
     nested_nodes: Vec<node::NestedNode>,
+
+    #[get = "pub"]
     which: node::Which
 }
 
@@ -44,13 +56,16 @@ pub mod node {
     use getset::{Getters, CopyGetters, Setters};
     use crate::ast;
 
-    #[derive(Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
+    #[derive(Clone, Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
     pub struct NestedNode {
+        #[get_copy = "pub"]
         id: super::Id,
+
+        #[get = "pub"]
         name: String
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Clone, Debug, PartialEq)]
     pub enum Which {
         File,
         Struct {
@@ -66,14 +81,22 @@ pub mod node {
     }
 }
 
-#[derive(Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[derive(Clone, Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
 pub struct Field {
+    #[get = "pub"]
     name: String,
+
+    #[get = "pub"]
+    discriminant_value: u16,
+
+    #[get = "pub"]
     which: field::Which
 }
 
 pub mod field {
-    #[derive(Debug, PartialEq)]
+    pub const NO_DISCRIMINANT : u16 = 0xFFFF;
+
+    #[derive(Clone, Debug, PartialEq)]
     pub enum Which {
         Slot(super::Type),
         Group(u64)
@@ -81,7 +104,8 @@ pub mod field {
 }
 
     
-#[derive(Constructor, Getters, CopyGetters, Setters, Default, Debug, PartialEq)]
+#[derive(Clone, Constructor, Getters, CopyGetters, Setters, Default, Debug, PartialEq)]
 pub struct Enumerant {
+    #[get = "pub"]
     name: String
 }
