@@ -100,7 +100,45 @@ pub struct RustAst {
 
 impl Name {
     fn from(name: &String) -> Name {
-        return Name { tokens: vec!(name.clone()) };
+        // Sanitize the names
+        let name = name
+            .replace("/", "_")
+            .replace("+", "_plus");
+
+        // Tokenize
+        let mut names = vec!();
+        let mut current_name = String::new();
+        let mut last_char_was_lowercase = false;
+        for ch in name.chars() {
+            if last_char_was_lowercase && ch.is_uppercase() {
+                names.push(current_name);
+                current_name = String::new()
+            }
+            current_name = current_name + ch.to_string().as_str();
+            last_char_was_lowercase = ch.is_lowercase();
+        }
+        if !current_name.is_empty() {
+            names.push(current_name)
+        }
+
+        return Name { tokens: names };
+    }
+
+    fn to_snake_case(&self) -> String {
+        return self.tokens.iter().map(|x| { x.to_lowercase() }).collect::<Vec<String>>().join("_");
+    }
+
+    fn to_camel_case(&self) -> String {
+        return self.tokens
+            .iter()
+            .map(|x| {
+                if x.is_empty() {
+                    return String::new();
+                }
+                x[0..1].to_uppercase() + x[1..].to_lowercase().as_str()
+            })
+            .collect::<Vec<String>>()
+            .join("");
     }
 }
 
@@ -254,9 +292,10 @@ fn build_translation_context_from_cgr(ctx: &TranslationContext, cgr: &crate::par
 
     for node in cgr.nodes() {
         if node.which() == &crate::parser::ast::node::Which::File {
+            let name = String::from(&node.display_name()[0..node.display_name_prefix_length()-1]);
             ctx.names_mut().insert(
                 node.id(),
-                Name::from(node.display_name())
+                Name::from(&name)
             );
         }
 
@@ -412,4 +451,134 @@ impl Resolver for RustAst {
 
 pub trait ToCode {
     fn to_code(&self) -> String;
+}
+
+impl ToCode for Type {
+    fn to_code(&self) -> String {
+        match self {
+            Type::Unit => String::from("()"),
+            Type::Bool => String::from("bool"),
+            Type::Int8 => String::from("i8"),
+            Type::Int16 => String::from("i16"),
+            Type::Int32 => String::from("i32"),
+            Type::Int64 => String::from("i64"),
+            Type::Uint8 => String::from("u8"),
+            Type::Uint16 => String::from("u16"),
+            Type::Uint32 => String::from("u32"),
+            Type::Uint64 => String::from("u64"),
+            Type::Float32 => String::from("f32"),
+            Type::Float64 => String::from("f64"),
+            Type::String => String::from("String"),
+            Type::List(t) => format!("Vec<{}>", t.to_code()),
+            Type::RefId(_) => panic!(),
+            Type::RefName(names) => {
+                if names.len() == 0 {
+                    panic!();
+                }
+
+                return
+                    String::from("crate::") +
+                    names[0..names.len()-1]
+                        .iter()
+                        .map(|x| x.to_snake_case())
+                        .collect::<Vec<String>>()
+                        .join("::").as_str() +
+                    "::" +
+                    names.last().unwrap().to_camel_case().as_str();
+            }
+        }
+    }
+}
+
+impl ToCode for Enumerant {
+    fn to_code(&self) -> String {
+        let mut ret = self.name.to_camel_case();
+        if self.rust_type != Type::Unit {
+            ret = format!("{}({})", ret, self.rust_type.to_code())
+        }
+        return ret;
+    }
+}
+
+impl ToCode for Enum {
+    fn to_code(&self) -> String {
+        return format!(
+            "pub enum {} {{\n\t{}\n}}",
+            self.name().to_camel_case(),
+            self.enumerants()
+                .iter()
+                .map(|x| { x.to_code() })
+                .collect::<Vec<String>>()
+                .join(",\n\t")
+        );
+    }
+}
+
+impl ToCode for Field {
+    fn to_code(&self) -> String {
+        format!("{}: {}", self.name().to_snake_case(), self.rust_type().to_code())
+    }
+}
+
+impl ToCode for Struct {
+    fn to_code(&self) -> String {
+        return format!(
+            "pub struct {} {{\n\t{}\n}}",
+            self.name().to_camel_case(),
+            self.fields()
+                .iter()
+                .map(|x| { x.to_code() })
+                .collect::<Vec<String>>()
+                .join(",\n\t")
+        );
+    }
+}
+
+impl ToCode for TypeDef {
+    fn to_code(&self) -> String {
+        match self {
+            TypeDef::Enum(e) => e.to_code(),
+            TypeDef::Struct(s) => s.to_code()
+        }
+    }
+}
+
+impl ToCode for ModuleElement {
+    fn to_code(&self) -> String {
+        match self {
+            ModuleElement::Module(m) => m.to_code(),
+            ModuleElement::TypeDef(t) => t.to_code()
+        }
+    }
+}
+
+impl ToCode for Module {
+    fn to_code(&self) -> String {
+        return format!(
+            "pub mod {} {{\n\t{}\n}}",
+            self.name().to_snake_case(),
+            self.elements()
+                .iter()
+                .map(ModuleElement::to_code)
+                .collect::<Vec<String>>()
+                .join("\n\n")
+                .replace("\n", "\n\t")
+        );
+    }
+}
+
+impl ToCode for RustAst {
+    fn to_code(&self) -> String {
+        let mut ret = String::new();
+        for module in &self.defs {
+            if module.elements().len() > 0 {
+                ret = format!(
+                    "{}\n\n{}",
+                    ret,
+                    module.to_code()
+                );
+            }
+        }
+        return ret;
+    }
 }

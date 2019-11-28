@@ -2,6 +2,7 @@ mod ast;
 
 use ast::Resolver;
 use ast::Translator;
+use ast::ToCode;
 
 pub fn translate(ast: &crate::parser::ast::CodeGeneratorRequest) -> ast::RustAst {
     let translated = ast::RustAst::translate(&ast::TranslationContext::new(&ast), &ast);
@@ -14,4 +15,8 @@ pub fn translate(ast: &crate::parser::ast::CodeGeneratorRequest) -> ast::RustAst
     );
 
     return resolved;
+}
+
+pub fn to_code(ast: &ast::RustAst) -> String {
+    return ast.to_code();
 }

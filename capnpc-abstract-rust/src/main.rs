@@ -12,4 +12,5 @@ fn main() {
 
     //println!("{:#?}", capnp_ast);
     println!("{:#?}", rust_ast);
+    println!("{}", rust::to_code(&rust_ast));
 }
