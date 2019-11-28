@@ -42,6 +42,7 @@ pub struct Enum {
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[get]
 pub struct Enumerant {
     name: Name,
     rust_type: Type
@@ -166,7 +167,7 @@ pub trait Translator<AST> {
 }
 
 impl TranslationContext {
-    pub fn new(cgr: &crate::parser::ast::CodeGeneratorRequest) -> TranslationContext {
+    pub fn new() -> TranslationContext {
         return TranslationContext {
             names: HashMap::new(),
             children: MultiMap::new(),
@@ -194,9 +195,9 @@ impl Translator<crate::parser::ast::Type> for Type {
         use crate::parser::ast::Type as ParserType;
 
         match t {
-            ParserType::AnyPointer => { panic!("Unsupported type.") },
+            ParserType::AnyPointer => { panic!("Unsupported type: AnyPointer") },
             ParserType::Bool => { Type::Bool },
-            ParserType::Data => { panic!("Unsupported type.") },
+            ParserType::Data => { panic!("Unsupported type: Data") },
             ParserType::Enum { type_id } => { Type::RefId(*type_id) },
             ParserType::Float32 => { Type::Float32 },
             ParserType::Float64 => { Type::Float64 },
@@ -204,7 +205,7 @@ impl Translator<crate::parser::ast::Type> for Type {
             ParserType::Int32 => { Type::Int32  },
             ParserType::Int64 => { Type::Int64  },
             ParserType::Int8 => { Type::Int8  },
-            ParserType::Interface { .. } => { panic!("Unsupported type.") },
+            ParserType::Interface { .. } => { panic!("Unsupported type: Interface") },
             ParserType::List( boxed_type ) => { Type::List(Box::new(Type::translate(ctx, &*boxed_type))) },
             ParserType::Struct { type_id } => { Type::RefId(*type_id) },
             ParserType::Text => { Type::String },
@@ -220,9 +221,20 @@ impl Translator<crate::parser::ast::Type> for Type {
 impl Translator<crate::parser::ast::Field> for Field {
     fn translate(ctx: &TranslationContext, f: &crate::parser::ast::Field) -> Self {
         match f.which() {
-            crate::parser::ast::field::Which::Group(_) => { panic!("Groups not supported."); }
+            crate::parser::ast::field::Which::Group(_) => { panic!("Groups are not supported."); }
             crate::parser::ast::field::Which::Slot(t) => {
                 return Field::new(Name::from(f.name()), Type::translate(ctx, t));
+            }
+        }
+    }
+}
+
+impl Translator<crate::parser::ast::Field> for Enumerant {
+    fn translate(ctx: &TranslationContext, f: &crate::parser::ast::Field) -> Self {
+        match f.which() {
+            crate::parser::ast::field::Which::Group(_) => { panic!("Groups are not supported."); }
+            crate::parser::ast::field::Which::Slot(t) => {
+                return Enumerant::new(Name::from(f.name()), Type::translate(ctx, t));
             }
         }
     }
@@ -249,13 +261,23 @@ impl Translator<crate::parser::ast::Node> for TypeDef  {
             },
             &crate::parser::ast::node::Which::File => { panic!() },
             &crate::parser::ast::node::Which::Interface => { panic!() },
-            &crate::parser::ast::node::Which::Struct { fields, .. } => {
+            &crate::parser::ast::node::Which::Struct { discriminant_count, fields, .. } => {
                 let name = ctx.names().get(&n.id()).unwrap().clone();
-                let mut new_fields = vec!();
-                for f in fields {
-                    new_fields.push(Field::translate(&ctx, f))
+
+                // Use a Rust enum here.
+                if *discriminant_count as usize == fields.len() {
+                    return TypeDef::Enum(Enum::new(
+                        n.id(),
+                        name,
+                        fields.iter().map(|f| Enumerant::translate(ctx, f)).collect()
+                    ));
                 }
-                return TypeDef::Struct(Struct::new(n.id(), name, new_fields));
+
+                return TypeDef::Struct(Struct::new(
+                    n.id(),
+                    name,
+                    fields.iter().map(|f| Field::translate(ctx, f)).collect()
+                ));
             }
         }
     }
@@ -347,6 +369,13 @@ impl Resolver for Type {
     }
 }
 
+impl Resolver for Enumerant {
+    fn build_context(_: &mut ResolutionContext, _: &Self) {}
+    fn resolve(ctx: &ResolutionContext, n: &Self) -> Self {
+        return Enumerant::new(n.name().clone(), Type::resolve(ctx, n.rust_type()));
+    }
+}
+
 impl Resolver for Field {
     fn build_context(_: &mut ResolutionContext, _: &Self) {}
     fn resolve(ctx: &ResolutionContext, n: &Self) -> Self {
@@ -358,8 +387,12 @@ impl Resolver for Enum {
     fn build_context(ctx: &mut ResolutionContext, n: &Self) {
         ctx.types_mut().insert(n.id(), vec!(n.name().clone()));
     }
-    fn resolve(_: &ResolutionContext, n: &Self) -> Self {
-        return n.clone();
+    fn resolve(ctx: &ResolutionContext, n: &Self) -> Self {
+        return Enum::new(
+            n.id(),
+            n.name().clone(),
+            n.enumerants().iter().map(|x| Enumerant::resolve(ctx, x)).collect()
+        )
     }
 }
 
@@ -371,7 +404,7 @@ impl Resolver for Struct {
         return Struct::new(
             n.id(),
             n.name().clone(),
-            n.fields().iter().map(|x| { Field::resolve(ctx, x) }).collect()
+            n.fields().iter().map(|x| Field::resolve(ctx, x)).collect()
         );
     }
 }
@@ -388,8 +421,7 @@ impl Resolver for TypeDef {
     }
     fn resolve(ctx: &ResolutionContext, n: &Self) -> Self {
         match n {
-            // Enums do not need to be resolved because they do not have references.
-            TypeDef::Enum(e) => TypeDef::Enum(e.clone()),
+            TypeDef::Enum(e) => TypeDef::Enum(Enum::resolve(ctx, e)),
             TypeDef::Struct(s) => TypeDef::Struct(Struct::resolve(ctx, s))
         }
     }

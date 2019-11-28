@@ -5,7 +5,7 @@ use ast::Translator;
 use ast::ToCode;
 
 pub fn translate(ast: &crate::parser::ast::CodeGeneratorRequest) -> ast::RustAst {
-    let translated = ast::RustAst::translate(&ast::TranslationContext::new(&ast), &ast);
+    let translated = ast::RustAst::translate(&ast::TranslationContext::new(), &ast);
 
     let mut resolution_context = ast::ResolutionContext::new();
     ast::RustAst::build_context(&mut resolution_context, &translated);
