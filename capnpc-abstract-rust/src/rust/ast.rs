@@ -125,12 +125,25 @@ impl Name {
         return Name { tokens: names };
     }
 
-    fn to_snake_case(&self) -> String {
-        return self.tokens.iter().map(|x| { x.to_lowercase() }).collect::<Vec<String>>().join("_");
+    fn check_reserved(s: String, reserved: &[&str]) -> String {
+        for k in reserved {
+            if &s.as_str() == k {
+                return s + "_";
+            }
+        }
+        return s;
     }
 
-    fn to_camel_case(&self) -> String {
-        return self.tokens
+    fn to_snake_case(&self, reserved: &[&str]) -> String {
+        let s = self.tokens.iter()
+            .map(|x| { x.to_lowercase() })
+            .collect::<Vec<String>>().join("_");
+
+        return Name::check_reserved(s, reserved);
+    }
+
+    fn to_camel_case(&self, reserved: &[&str]) -> String {
+        let s = self.tokens
             .iter()
             .map(|x| {
                 if x.is_empty() {
@@ -140,6 +153,8 @@ impl Name {
             })
             .collect::<Vec<String>>()
             .join("");
+
+        return Name::check_reserved(s, reserved);
     }
 }
 
@@ -273,6 +288,29 @@ impl Translator<crate::parser::ast::Node> for TypeDef  {
                     ));
                 }
 
+                // Part, but not all, of this is in a union.
+                if *discriminant_count > 0 && (*discriminant_count as usize) < fields.len() {
+                    generate_id_for_which_enum(n.id());
+
+                    let mut new_fields = vec!();
+                    for f in fields {
+                        if f.discriminant_value() == crate::parser::ast::field::NO_DISCRIMINANT {
+                            new_fields.push(Field::translate(ctx, f));
+                        }
+                    }
+
+                    new_fields.push(Field::new(
+                        Name::from(&String::from("which")),
+                        Type::RefId(generate_id_for_which_enum(n.id()))
+                    ));
+
+                    return TypeDef::Struct(Struct::new(
+                        n.id(),
+                        name,
+                        new_fields
+                    ));
+                }
+
                 return TypeDef::Struct(Struct::new(
                     n.id(),
                     name,
@@ -305,6 +343,22 @@ impl Translator<crate::parser::ast::Node> for Module  {
 
             defs.push(ModuleElement::Module(Module::translate(&ctx, &node)));
         }
+
+        // If part (but not all) of this node is a union generate a "Which" enum.
+        if let crate::parser::ast::node::Which::Struct { discriminant_count, fields, .. } = n.which() {
+            if *discriminant_count > 0 && (*discriminant_count as usize) < fields.len() {
+                let e = Enum::new(
+                    generate_id_for_which_enum(n.id()),
+                    Name::from(&String::from("Which")),
+                    fields.iter()
+                        .filter(|f| f.discriminant_value() != crate::parser::ast::field::NO_DISCRIMINANT)
+                        .map(|f| Enumerant::translate(ctx, f))
+                        .collect()
+                );
+                defs.push(ModuleElement::TypeDef(TypeDef::Enum(e)));
+            }
+        }
+
         return Module::new(ctx.names().get(&n.id()).unwrap().clone(), defs);
     }
 }
@@ -330,6 +384,11 @@ fn build_translation_context_from_cgr(ctx: &TranslationContext, cgr: &crate::par
     }
 
     return ctx;
+}
+
+fn generate_id_for_which_enum(id: Id) -> Id {
+     // Not the best generator but it's easy.
+    return id + 1;
 }
 
 //
@@ -481,6 +540,8 @@ impl Resolver for RustAst {
 // Code generation
 //
 
+const RESERVED: &[&str] = &["Box", "box", "move"];
+
 pub trait ToCode {
     fn to_code(&self) -> String;
 }
@@ -512,11 +573,11 @@ impl ToCode for Type {
                     String::from("crate::") +
                     names[0..names.len()-1]
                         .iter()
-                        .map(|x| x.to_snake_case())
+                        .map(|x| x.to_snake_case(RESERVED))
                         .collect::<Vec<String>>()
                         .join("::").as_str() +
                     "::" +
-                    names.last().unwrap().to_camel_case().as_str();
+                    names.last().unwrap().to_camel_case(RESERVED).as_str();
             }
         }
     }
@@ -524,7 +585,7 @@ impl ToCode for Type {
 
 impl ToCode for Enumerant {
     fn to_code(&self) -> String {
-        let mut ret = self.name.to_camel_case();
+        let mut ret = self.name.to_camel_case(RESERVED);
         if self.rust_type != Type::Unit {
             ret = format!("{}({})", ret, self.rust_type.to_code())
         }
@@ -536,7 +597,7 @@ impl ToCode for Enum {
     fn to_code(&self) -> String {
         return format!(
             "pub enum {} {{\n\t{}\n}}",
-            self.name().to_camel_case(),
+            self.name().to_camel_case(RESERVED),
             self.enumerants()
                 .iter()
                 .map(|x| { x.to_code() })
@@ -548,7 +609,7 @@ impl ToCode for Enum {
 
 impl ToCode for Field {
     fn to_code(&self) -> String {
-        format!("{}: {}", self.name().to_snake_case(), self.rust_type().to_code())
+        format!("{}: {}", self.name().to_snake_case(RESERVED), self.rust_type().to_code())
     }
 }
 
@@ -556,7 +617,7 @@ impl ToCode for Struct {
     fn to_code(&self) -> String {
         return format!(
             "pub struct {} {{\n\t{}\n}}",
-            self.name().to_camel_case(),
+            self.name().to_camel_case(RESERVED),
             self.fields()
                 .iter()
                 .map(|x| { x.to_code() })
@@ -588,7 +649,7 @@ impl ToCode for Module {
     fn to_code(&self) -> String {
         return format!(
             "pub mod {} {{\n\t{}\n}}",
-            self.name().to_snake_case(),
+            self.name().to_snake_case(RESERVED),
             self.elements()
                 .iter()
                 .map(ModuleElement::to_code)

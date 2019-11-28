@@ -86,7 +86,7 @@ pub struct Field {
     #[get = "pub"]
     name: String,
 
-    #[get = "pub"]
+    #[get_copy = "pub"]
     discriminant_value: u16,
 
     #[get = "pub"]
