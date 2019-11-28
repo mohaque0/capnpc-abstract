@@ -99,6 +99,29 @@ pub struct RustAst {
 // Misc Impls
 //
 
+impl Type {
+    fn is_primitive(&self) -> bool {
+        match self {
+            Type::Unit => true,
+            Type::Bool => true,
+            Type::Int8 => true,
+            Type::Int16 => true,
+            Type::Int32 => true,
+            Type::Int64 => true,
+            Type::Uint8 => true,
+            Type::Uint16 => true,
+            Type::Uint32 => true,
+            Type::Uint64 => true,
+            Type::Float32 => true,
+            Type::Float64 => true,
+            Type::String => false,
+            Type::List(_) => false,
+            Type::RefId(_) => false,
+            Type::RefName(_) => false
+        }
+    }
+}
+
 impl Name {
     fn from(name: &String) -> Name {
         // Sanitize the names
@@ -596,7 +619,8 @@ impl ToCode for Enumerant {
 impl ToCode for Enum {
     fn to_code(&self) -> String {
         return format!(
-            "pub enum {} {{\n\t{}\n}}",
+            "#[derive(Clone, Debug, PartialEq)]\n\
+            pub enum {} {{\n\t{}\n}}",
             self.name().to_camel_case(RESERVED),
             self.enumerants()
                 .iter()
@@ -609,20 +633,27 @@ impl ToCode for Enum {
 
 impl ToCode for Field {
     fn to_code(&self) -> String {
-        format!("{}: {}", self.name().to_snake_case(RESERVED), self.rust_type().to_code())
+        format!(
+            "{}\n{}: {}",
+            if self.rust_type().is_primitive() { "#[get_copy = \"pub\"]" } else { "#[get = \"pub\"]" },
+            self.name().to_snake_case(RESERVED),
+            self.rust_type().to_code()
+        )
     }
 }
 
 impl ToCode for Struct {
     fn to_code(&self) -> String {
         return format!(
-            "pub struct {} {{\n\t{}\n}}",
+            "#[derive(Clone, Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]\n\
+            pub struct {} {{\n\t{}\n}}",
             self.name().to_camel_case(RESERVED),
             self.fields()
                 .iter()
                 .map(|x| { x.to_code() })
                 .collect::<Vec<String>>()
-                .join(",\n\t")
+                .join(",\n\n")
+                .replace("\n", "\n\t")
         );
     }
 }
@@ -647,12 +678,19 @@ impl ToCode for ModuleElement {
 
 impl ToCode for Module {
     fn to_code(&self) -> String {
+        if is_trivial_module(self) {
+            return String::new();
+        }
+
         return format!(
-            "pub mod {} {{\n\t{}\n}}",
+            "pub mod {} {{\n\
+            \tuse crate::getset::{{Getters, CopyGetters, MutGetters, Setters}};\n\
+            \t{}\n}}",
             self.name().to_snake_case(RESERVED),
             self.elements()
                 .iter()
                 .map(ModuleElement::to_code)
+                .filter(|s| !s.is_empty())
                 .collect::<Vec<String>>()
                 .join("\n\n")
                 .replace("\n", "\n\t")
@@ -660,18 +698,39 @@ impl ToCode for Module {
     }
 }
 
+fn is_trivial_module(m: &Module) -> bool {
+    if m.elements()
+        .iter()
+        .filter(|e| { if let ModuleElement::TypeDef(_) = e { true } else { false }})
+        .count() > 0
+    {
+        return false;
+    }
+
+    return m.elements()
+        .iter()
+        .filter_map(|e| {
+            if let ModuleElement::Module(m) = e {
+                Some(m)
+            } else {
+                None
+            }
+        })
+        .all(is_trivial_module);
+}
+
 impl ToCode for RustAst {
     fn to_code(&self) -> String {
-        let mut ret = String::new();
-        for module in &self.defs {
-            if module.elements().len() > 0 {
-                ret = format!(
-                    "{}\n\n{}",
-                    ret,
-                    module.to_code()
-                );
-            }
-        }
-        return ret;
+        let imports =
+        "#[macro_use] extern crate derive_more;\n\
+        extern crate getset;\n\n\n";
+
+        let modules = self.defs.iter()
+            .map(|m| m.to_code())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<String>>()
+            .join("\n\n");
+
+        return format!("{}{}", imports, modules);
     }
 }
