@@ -133,13 +133,44 @@ impl ParseFrom<schema_capnp::node::Reader<'_>> for ast::Node {
     }
 }
 
+impl ParseFrom<schema_capnp::code_generator_request::requested_file::import::Reader<'_>> for ast::code_generator_request::requested_file::Import {
+    fn parse(reader: schema_capnp::code_generator_request::requested_file::import::Reader<'_>) -> capnp::Result<ast::code_generator_request::requested_file::Import> {
+        return Ok(
+            ast::code_generator_request::requested_file::Import::new(
+                reader.get_id(),
+                String::from(reader.get_name()?),
+            )
+        )
+    }
+}
+
+impl ParseFrom<schema_capnp::code_generator_request::requested_file::Reader<'_>> for ast::code_generator_request::RequestedFile {
+    fn parse(reader: schema_capnp::code_generator_request::requested_file::Reader<'_>) -> capnp::Result<ast::code_generator_request::RequestedFile> {
+        let mut imports = vec!();
+        for import in reader.get_imports()?.iter() {
+            imports.push(ast::code_generator_request::requested_file::Import::parse(import)?);
+        }
+        return Ok(
+            ast::code_generator_request::RequestedFile::new(
+                reader.get_id(),
+                String::from(reader.get_filename()?),
+                imports
+            )
+        )
+    }
+}
+
 impl ParseFrom<schema_capnp::code_generator_request::Reader<'_>> for ast::CodeGeneratorRequest {
     fn parse(reader: schema_capnp::code_generator_request::Reader) -> capnp::Result<ast::CodeGeneratorRequest> {
-        let mut result = vec!();
+        let mut nodes = vec!();
         for node in reader.get_nodes()?.iter() {
-            result.push(ast::Node::parse(node)?);
+            nodes.push(ast::Node::parse(node)?);
         }
-        return Ok(ast::CodeGeneratorRequest::new(result));
+        let mut requested_files = vec!();
+        for requested_file in reader.get_requested_files()?.iter() {
+            requested_files.push(ast::code_generator_request::RequestedFile::parse(requested_file)?);
+        }
+        return Ok(ast::CodeGeneratorRequest::new(nodes, requested_files));
     }
 }
 
