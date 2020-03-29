@@ -3,6 +3,7 @@ extern crate capnp;
 extern crate getset;
 extern crate multimap;
 extern crate parser;
+extern crate indoc;
 
 mod rust;
 

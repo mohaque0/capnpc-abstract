@@ -22,6 +22,12 @@ fn to_code(ast: &ast::RustAst) -> String {
 }
 
 pub fn code_gen(cgr: &crate::parser::ast::CodeGeneratorRequest) -> String {
-    println!("{:#?}", cgr);
-    return to_code(&ast::RustAst::generate_serde(&ast::SerdeGenerationContext::new(), &translate(&cgr)));
+    // Use this to view the cgr for debugging.
+    //println!("{:#?}", cgr);
+    let ast0 = translate(&cgr);
+    let ast1 = ast::RustAst::generate_serde(
+        &ast::SerdeGenerationContext::new(),
+        &ast0
+    );
+    return to_code(&ast1);
 }

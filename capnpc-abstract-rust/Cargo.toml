@@ -10,5 +10,6 @@ edition = "2018"
 capnp = "0.10.1"
 derive_more = "0.15.0"
 getset = "0.0.9"
+indoc = "0.3"
 multimap = "0.8.0"
 parser = { path = "../parser" }
