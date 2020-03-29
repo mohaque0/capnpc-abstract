@@ -16,6 +16,14 @@ pub struct FullyQualifiedName {
     names: Vec<Name>
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EnumOrigin {
+    Enum,
+    Struct,
+    WhichForPartialUnion
+}
+
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Type {
     Unit,
@@ -52,6 +60,9 @@ pub struct Enum {
     ///
     #[get]
     capnp_type_name: FullyQualifiedName,
+
+    #[get_copy]
+    enum_origin: EnumOrigin,
 
     #[get]
     enumerants: Vec<Enumerant>
@@ -231,7 +242,7 @@ impl FullyQualifiedName {
 }
 
 //
-// AST Transation
+// AST Translation
 //
 
 #[derive(Clone, Getters, CopyGetters, MutGetters, Setters, Debug, PartialEq)]
@@ -395,8 +406,9 @@ impl Translator<crate::parser::ast::Node> for TypeDef  {
                     Enum::new(
                         n.id(),
                         name.clone(),
-                        ctx.generate_capnp_type_name(&name),
                         ctx.generate_fully_qualified_type_name(&name),
+                        ctx.generate_capnp_type_name(&name),
+                        EnumOrigin::Enum,
                         new_enumerants
                     )
                 );
@@ -411,8 +423,9 @@ impl Translator<crate::parser::ast::Node> for TypeDef  {
                     return TypeDef::Enum(Enum::new(
                         n.id(),
                         name.clone(),
-                        ctx.generate_capnp_type_name(&name),
                         ctx.generate_fully_qualified_type_name(&name),
+                        ctx.generate_capnp_type_name(&name),
+                        EnumOrigin::Struct,
                         fields.iter().map(|f| Enumerant::translate(ctx, f)).collect()
                     ));
                 }
@@ -436,8 +449,8 @@ impl Translator<crate::parser::ast::Node> for TypeDef  {
                     return TypeDef::Struct(Struct::new(
                         n.id(),
                         name.clone(),
-                        ctx.generate_capnp_type_name(&name),
                         ctx.generate_fully_qualified_type_name(&name),
+                        ctx.generate_capnp_type_name(&name),
                         new_fields
                     ));
                 }
@@ -445,8 +458,8 @@ impl Translator<crate::parser::ast::Node> for TypeDef  {
                 return TypeDef::Struct(Struct::new(
                     n.id(),
                     name.clone(),
-                    ctx.generate_capnp_type_name(&name),
                     ctx.generate_fully_qualified_type_name(&name),
+                    ctx.generate_capnp_type_name(&name),
                     fields.iter().map(|f| Field::translate(ctx, f)).collect()
                 ));
             }
@@ -486,8 +499,9 @@ impl Translator<crate::parser::ast::Node> for Module  {
                 let e = Enum::new(
                     generate_id_for_which_enum(n.id()),
                     name.clone(),
-                    ctx.generate_capnp_type_name(&name),
-                    ctx.generate_fully_qualified_type_name(&name),
+                    subctx.generate_fully_qualified_type_name(&name),
+                    ctx.generate_capnp_type_name(&module_name),
+                    EnumOrigin::Struct,
                     fields.iter()
                         .filter(|f| f.discriminant_value() != crate::parser::ast::field::NO_DISCRIMINANT)
                         .map(|f| Enumerant::translate(&subctx, f))
@@ -611,8 +625,9 @@ impl Resolver for Enum {
         return Enum::new(
             n.id(),
             n.name().clone(),
-            n.capnp_type_name().clone(),
             n.fully_qualified_type_name().clone(),
+            n.capnp_type_name().clone(),
+            n.enum_origin(),
             n.enumerants().iter().map(|x| Enumerant::resolve(ctx, x)).collect()
         )
     }
@@ -626,8 +641,8 @@ impl Resolver for Struct {
         return Struct::new(
             n.id(),
             n.name().clone(),
-            n.capnp_type_name().clone(),
             n.fully_qualified_type_name().clone(),
+            n.capnp_type_name().clone(),
             n.fields().iter().map(|x| Field::resolve(ctx, x)).collect()
         );
     }
@@ -888,7 +903,11 @@ impl ToCode for Impl {
 
         fn enumerant_to_read_case(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
             return match &enumerant.rust_type() {
-                Type::Unit => String::from("()"),
+                Type::Unit =>
+                    format!("#CAPNP_TYPE::#ENUMERANT_NAME => #IDIOMATIC_NAME::#ENUMERANT_NAME")
+                    .replace("#CAPNP_TYPE", capnp_enum_type.to_code().as_str())
+                    .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                    .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
                 Type::List(t) => 
                     indoc!(
                         "Ok(#CAPNP_WHICH::#ENUMERANT_NAME(data)) => {
@@ -921,9 +940,16 @@ impl ToCode for Impl {
         }
 
         fn get_capnp_type(t: &TypeDef, serde_trait: SerdeTrait) -> FullyQualifiedName {
+            // If this was derived directly from an enum, it has no Reader or Builder.
+            if let TypeDef::Enum(e) = t {
+                if e.enum_origin() == EnumOrigin::Enum {
+                    return e.capnp_type_name().clone();
+                }
+            }
+
             let reader_or_writer = match serde_trait {
-                SerdeTrait::ReadFrom => String::from("Reader"),
-                SerdeTrait::WriteTo => String::from("Builder"),
+                SerdeTrait::ReadFrom => String::from("Reader<'_>"),
+                SerdeTrait::WriteTo => String::from("Builder<'_>"),
             };
             match t {
                 TypeDef::Enum(e) => e.capnp_type_name().clone(),
@@ -938,39 +964,102 @@ impl ToCode for Impl {
             }
         };
 
+        fn generate_enum_reader_for_capnp_enum(impl_info: &Impl, e: &Enum) -> String {
+            let capnp_reader_type = get_capnp_type(&impl_info.for_type, SerdeTrait::ReadFrom);
+            let idiomatic_type = get_idiomatic_type_name(&impl_info.for_type);
+
+            return indoc!(
+                "\tfn read_from(src: &#SRC_TYPE) -> #TGT_TYPE {
+                    match src {
+                        #ENUMERANTS
+                    }
+                }")
+                .replace("#SRC_TYPE", capnp_reader_type.to_code().as_str())
+                .replace("#TGT_TYPE", idiomatic_type.to_code().as_str())
+                .replace(
+                    "#ENUMERANTS",
+                    e.enumerants()
+                        .iter()
+                        .map(|enumerant| enumerant_to_read_case(enumerant, e.capnp_type_name(), &idiomatic_type))
+                        .collect::<Vec<String>>()
+                        .join(",\n")
+                        .replace("\n", "\n\t\t")
+                        .as_str()
+                )
+                .replace("    ", "\t")
+                .replace("\n", "\n\t");
+        }
+
+        fn generate_enum_reader_for_capnp_struct(impl_info: &Impl, e: &Enum) -> String {
+            let capnp_reader_type = get_capnp_type(&impl_info.for_type, SerdeTrait::ReadFrom);
+            let idiomatic_type = get_idiomatic_type_name(&impl_info.for_type);
+
+            return indoc!(
+                "\tfn read_from(src: &#SRC_TYPE) -> Result<#TGT_TYPE, Error> {
+                    match src.which() {
+                        #ENUMERANTS
+                        Err(::capnp::NotInSchema(i)) => {
+                            Err(::capnp::NotInSchema(i))?
+                        }
+                    }
+                }")
+                .replace("#SRC_TYPE", capnp_reader_type.to_code().as_str())
+                .replace("#TGT_TYPE", idiomatic_type.to_code().as_str())
+                .replace(
+                    "#ENUMERANTS",
+                    e.enumerants()
+                        .iter()
+                        .map(|enumerant| enumerant_to_read_case(enumerant, e.capnp_type_name(), &idiomatic_type))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                        .replace("\n", "\n\t\t")
+                        .as_str()
+                )
+                .replace("    ", "\t")
+                .replace("\n", "\n\t");
+        }
+
+        fn generate_enum_reader_for_capnp_partial_union(impl_info: &Impl, e: &Enum) -> String {
+            let capnp_reader_type = get_capnp_type(&impl_info.for_type, SerdeTrait::ReadFrom);
+            let idiomatic_type = get_idiomatic_type_name(&impl_info.for_type);
+
+            return indoc!(
+                "\tfn read_from(src: &#SRC_TYPE) -> Result<#TGT_TYPE, Error> {
+                    match src.which() {
+                        #ENUMERANTS
+                        Err(::capnp::NotInSchema(i)) => {
+                            Err(::capnp::NotInSchema(i))?
+                        }
+                    }
+                }")
+                .replace("#SRC_TYPE", capnp_reader_type.to_code().as_str())
+                .replace("#TGT_TYPE", idiomatic_type.to_code().as_str())
+                .replace(
+                    "#ENUMERANTS",
+                    e.enumerants()
+                        .iter()
+                        .map(|enumerant| enumerant_to_read_case(enumerant, e.capnp_type_name(), &idiomatic_type))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                        .replace("\n", "\n\t\t")
+                        .as_str()
+                )
+                .replace("    ", "\t")
+                .replace("\n", "\n\t");
+        }
+
         let get_read_impl_for_type = |t: &TypeDef| -> String {
             match t {
                 TypeDef::Enum(e) => {
-                    let capnp_reader_type = get_capnp_type(&self.for_type, SerdeTrait::ReadFrom);
-                    let idiomatic_type = get_idiomatic_type_name(&self.for_type);
-
-                    return indoc!(
-                        "\tfn read_from(src: &#SRC_TYPE<'_>) -> Result<#TGT_TYPE, Error> {
-                            match src.which() {
-                                #ENUMERANTS
-                                Err(::capnp::NotInSchema(i)) => {
-                                    Err(::capnp::NotInSchema(i))?
-                                }
-                            }
-                        }")
-                        .replace("#SRC_TYPE", capnp_reader_type.to_code().as_str())
-                        .replace("#TGT_TYPE", idiomatic_type.to_code().as_str())
-                        .replace(
-                            "#ENUMERANTS",
-                            e.enumerants()
-                                .iter()
-                                .map(|enumerant| enumerant_to_read_case(enumerant, e.capnp_type_name(), &idiomatic_type))
-                                .collect::<Vec<String>>()
-                                .join("\n")
-                                .replace("\n", "\n\t\t")
-                                .as_str()
-                        )
-                        .replace("    ", "\t")
-                        .replace("\n", "\n\t");
+                    match e.enum_origin() {
+                        EnumOrigin::Enum => generate_enum_reader_for_capnp_enum(self, &e),
+                        EnumOrigin::Struct => generate_enum_reader_for_capnp_struct(self, &e),
+                        EnumOrigin::WhichForPartialUnion => generate_enum_reader_for_capnp_partial_union(self, &e)
+                    }
                 },
                 TypeDef::Struct(s) => {
                     return format!(
-                        "fn read_from(src: &{}<'_>)",
+                        "fn read_from(src: &{})",
                         get_capnp_type(&self.for_type, SerdeTrait::ReadFrom).to_code()
                     )
                 }
@@ -980,7 +1069,7 @@ impl ToCode for Impl {
         match self.trait_type {
             SerdeTrait::ReadFrom => {
                 return format!(
-                    "impl crate::serde::ReadFrom<{}<'_>> for {} {{\n{}\n}}",
+                    "impl crate::serde::ReadFrom<{}> for {} {{\n{}\n}}",
                     get_capnp_type(&self.for_type, SerdeTrait::ReadFrom).to_code(),
                     get_idiomatic_type_name(&self.for_type).to_code(),
                     get_read_impl_for_type(&self.for_type)
@@ -988,7 +1077,7 @@ impl ToCode for Impl {
             },
             SerdeTrait::WriteTo => {
                 return format!(
-                    "impl crate::serde::WriteTo<{}<'_>> for {} {{\n{}\n}}",
+                    "impl crate::serde::WriteTo<{}> for {} {{\n{}\n}}",
                     get_capnp_type(&self.for_type, SerdeTrait::WriteTo).to_code(),
                     get_idiomatic_type_name(&self.for_type).to_code(),
                     "<impl...>"
