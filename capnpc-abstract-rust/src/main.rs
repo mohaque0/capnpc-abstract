@@ -6,6 +6,7 @@ extern crate parser;
 extern crate indoc;
 
 mod rust;
+mod rust2;
 
 use std::fs::File;
 use std::io::{Write, Error};

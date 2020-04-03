@@ -1048,7 +1048,39 @@ impl ToCode for Impl {
                 .replace("\n", "\n\t");
         }
 
+        fn get_parse_expr(t: &Type, expr_for_unparsed_data: &str) -> String {
+            match t {
+                Type::RefName(name) => format!("{}::read_from({})?", name.to_code(), expr_for_unparsed_data),
+                _ => expr_for_unparsed_data.to_string()
+            }
+        }
+
+        fn get_field_reader(f: &Field) -> String {
+            return match f.rust_type() {
+                Type::Unit => panic!("Unsupported type for struct field: Unit"),
+                Type::List(t) => indoc!(
+                        "{
+                            let mut items : Vec<#TGT_TYPE> = vec!();
+                            for i in src.get_#FIELD_NAME()?.iter() {
+                                items.push(#TGT_TYPE::read_from(&i)?);
+                            };
+                            items
+                        }"
+                    )
+                    .replace("#FIELD_NAME", f.name.to_snake_case(RESERVED).as_str())
+                    .replace("#TGT_TYPE", t.to_code().as_str())
+                    .replace("#PARSE_EXPR", get_parse_expr(&t, "&i").as_str())
+                ,
+                Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
+                Type::RefName(name) => format!("{}::read_from(src.get_{}())?", name.to_code(), f.name.to_snake_case(RESERVED)),
+                _ => format!("src.get_{}()", f.name.to_snake_case(RESERVED))
+            }
+        };
+
         let get_read_impl_for_type = |t: &TypeDef| -> String {
+            let capnp_reader_type = get_capnp_type(&self.for_type, SerdeTrait::ReadFrom);
+            let idiomatic_type = get_idiomatic_type_name(&self.for_type);
+
             match t {
                 TypeDef::Enum(e) => {
                     match e.enum_origin() {
@@ -1058,10 +1090,27 @@ impl ToCode for Impl {
                     }
                 },
                 TypeDef::Struct(s) => {
-                    return format!(
-                        "fn read_from(src: &{})",
-                        get_capnp_type(&self.for_type, SerdeTrait::ReadFrom).to_code()
+                    return indoc!(
+                        "fn read_from(src: &#SRC_TYPE) -> Result<#TGT_TYPE, Error> {
+                            return Ok(#TGT_TYPE::new(
+                                #GET_FIELDS
+                            ))
+                        }"
                     )
+                    .replace("#SRC_TYPE", capnp_reader_type.to_code().as_str())
+                    .replace("#TGT_TYPE", idiomatic_type.to_code().as_str())
+                    .replace(
+                        "#GET_FIELDS",
+                        s.fields()
+                            .iter()
+                            .map(get_field_reader)
+                            .collect::<Vec<String>>()
+                            .join(",\n")
+                            .replace("\n", "\n\t\t")
+                            .as_str()
+                    )
+                    .replace("    ", "\t")
+                    .replace("\n", "\n\t");
                 }
             }
         };
