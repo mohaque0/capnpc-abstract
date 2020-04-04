@@ -124,7 +124,10 @@ pub struct Impl {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModuleElement {
+    ExternCrateDecl(String),
+    UseDecl(String),
     TypeDef(TypeDef),
+    TraitDef(SerdeTrait),
     Module(Module),
     Impl(Impl)
 }
@@ -432,7 +435,6 @@ impl Translator<crate::parser::ast::Node> for TypeDef  {
 
                 // Part, but not all, of this is in a union.
                 if *discriminant_count > 0 && (*discriminant_count as usize) < fields.len() {
-                    generate_id_for_which_enum(n.id());
 
                     let mut new_fields = vec!();
                     for f in fields {
@@ -473,6 +475,8 @@ impl Translator<crate::parser::ast::Node> for Module  {
         let module_name = ctx.names().get(&n.id()).unwrap().clone();
         let subctx = ctx.clone_with_submodule(&module_name);
 
+        defs.push(ModuleElement::UseDecl("crate::getset::{Getters, CopyGetters, MutGetters, Setters}".to_string()));
+
         for nested_node in n.nested_nodes() {
             let node_option = ctx.nodes.get(&nested_node.id());
             if let None = node_option {
@@ -501,7 +505,7 @@ impl Translator<crate::parser::ast::Node> for Module  {
                     name.clone(),
                     subctx.generate_fully_qualified_type_name(&name),
                     ctx.generate_capnp_type_name(&module_name),
-                    EnumOrigin::Struct,
+                    EnumOrigin::WhichForPartialUnion,
                     fields.iter()
                         .filter(|f| f.discriminant_value() != crate::parser::ast::field::NO_DISCRIMINANT)
                         .map(|f| Enumerant::translate(&subctx, f))
@@ -669,15 +673,21 @@ impl Resolver for TypeDef {
 impl Resolver for ModuleElement {
     fn build_context(ctx: &mut ResolutionContext, n: &Self) {
         match n {
+            ModuleElement::UseDecl(_) => {}
+            ModuleElement::ExternCrateDecl(_) => {}
             ModuleElement::TypeDef(def) => TypeDef::build_context(ctx, def),
             ModuleElement::Module(m) => Module::build_context(ctx, m),
+            ModuleElement::TraitDef(_) => {}
             ModuleElement::Impl(_) => {}
         }
     }
     fn resolve(ctx: &ResolutionContext, n: &Self) -> Self {
         match n {
+            ModuleElement::UseDecl(_) => n.clone(),
+            ModuleElement::ExternCrateDecl(_) => n.clone(),
             ModuleElement::TypeDef(def) => ModuleElement::TypeDef(TypeDef::resolve(ctx, def)),
             ModuleElement::Module(m) => ModuleElement::Module(Module::resolve(ctx, m)),
+            ModuleElement::TraitDef(_) => n.clone(),
             ModuleElement::Impl(_) => n.clone()
         }
     }
@@ -755,6 +765,8 @@ impl SerdeGenerator<Module> for Module {
     fn generate_serde(ctx: &SerdeGenerationContext, serde_module: &mut Module, n: &Module) {
         for element in n.elements() {
             match element {
+                ModuleElement::UseDecl(_) => {}
+                ModuleElement::ExternCrateDecl(_) => {}
                 ModuleElement::Module(m) => Module::generate_serde(ctx, serde_module, &m),
                 ModuleElement::TypeDef(t) => {
                     serde_module.elements_mut().push(
@@ -764,6 +776,7 @@ impl SerdeGenerator<Module> for Module {
                         ModuleElement::Impl(Impl::new(SerdeTrait::WriteTo, t.clone()))
                     );
                 },
+                ModuleElement::TraitDef(_) => {}
                 ModuleElement::Impl(_) => {}
             }
         }
@@ -773,6 +786,9 @@ impl SerdeGenerator<Module> for Module {
 impl RustAst {
     pub fn generate_serde(ctx: &SerdeGenerationContext, n: &RustAst) -> RustAst {
         let mut serde_module = Module::new(Name::from(&String::from("serde")), vec!());
+        serde_module.elements_mut().push(ModuleElement::UseDecl("capnp::Error".to_string()));
+        serde_module.elements_mut().push(ModuleElement::TraitDef(SerdeTrait::ReadFrom));
+        serde_module.elements_mut().push(ModuleElement::TraitDef(SerdeTrait::WriteTo));
         let mut defs = vec!();
         for def in &n.defs {
             defs.push(def.clone());
@@ -904,7 +920,7 @@ impl ToCode for Impl {
         fn enumerant_to_read_case(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
             return match &enumerant.rust_type() {
                 Type::Unit =>
-                    format!("#CAPNP_TYPE::#ENUMERANT_NAME => #IDIOMATIC_NAME::#ENUMERANT_NAME")
+                    format!("#CAPNP_TYPE::#ENUMERANT_NAME => Ok(#IDIOMATIC_NAME::#ENUMERANT_NAME)")
                     .replace("#CAPNP_TYPE", capnp_enum_type.to_code().as_str())
                     .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
                     .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
@@ -913,7 +929,7 @@ impl ToCode for Impl {
                         "Ok(#CAPNP_WHICH::#ENUMERANT_NAME(data)) => {
                             let mut parsed_data : Vec<#DATA_TYPE> = vec!();
                             for item in data?.iter() {
-                                let translated = #DATA_TYPE::read_from(item?)
+                                let translated = #DATA_TYPE::read_from(&item?)?;
                                 parsed_data.push(translated);
                             }
                             Ok(#IDIOMATIC_NAME::#ENUMERANT_NAME(parsed_data))
@@ -969,7 +985,7 @@ impl ToCode for Impl {
             let idiomatic_type = get_idiomatic_type_name(&impl_info.for_type);
 
             return indoc!(
-                "\tfn read_from(src: &#SRC_TYPE) -> #TGT_TYPE {
+                "\tfn read_from(src: &#SRC_TYPE) -> Result<#TGT_TYPE, Error> {
                     match src {
                         #ENUMERANTS
                     }
@@ -1048,13 +1064,6 @@ impl ToCode for Impl {
                 .replace("\n", "\n\t");
         }
 
-        fn get_parse_expr(t: &Type, expr_for_unparsed_data: &str) -> String {
-            match t {
-                Type::RefName(name) => format!("{}::read_from({})?", name.to_code(), expr_for_unparsed_data),
-                _ => expr_for_unparsed_data.to_string()
-            }
-        }
-
         fn get_field_reader(f: &Field) -> String {
             return match f.rust_type() {
                 Type::Unit => panic!("Unsupported type for struct field: Unit"),
@@ -1069,10 +1078,16 @@ impl ToCode for Impl {
                     )
                     .replace("#FIELD_NAME", f.name.to_snake_case(RESERVED).as_str())
                     .replace("#TGT_TYPE", t.to_code().as_str())
-                    .replace("#PARSE_EXPR", get_parse_expr(&t, "&i").as_str())
                 ,
                 Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
-                Type::RefName(name) => format!("{}::read_from(src.get_{}())?", name.to_code(), f.name.to_snake_case(RESERVED)),
+                Type::RefName(name) => {
+                    let field_name = f.name.to_snake_case(RESERVED);
+                    if field_name == "which" {
+                        format!("{}::read_from(&src)?", name.to_code())
+                    } else {
+                        format!("{}::read_from(&src.get_{}()?)?", name.to_code(), field_name)
+                    }
+                },
                 _ => format!("src.get_{}()", f.name.to_snake_case(RESERVED))
             }
         };
@@ -1091,7 +1106,7 @@ impl ToCode for Impl {
                 },
                 TypeDef::Struct(s) => {
                     return indoc!(
-                        "fn read_from(src: &#SRC_TYPE) -> Result<#TGT_TYPE, Error> {
+                        "\tfn read_from(src: &#SRC_TYPE) -> Result<#TGT_TYPE, Error> {
                             return Ok(#TGT_TYPE::new(
                                 #GET_FIELDS
                             ))
@@ -1125,13 +1140,33 @@ impl ToCode for Impl {
                 );
             },
             SerdeTrait::WriteTo => {
+                return format!("");
+                /*
                 return format!(
                     "impl crate::serde::WriteTo<{}> for {} {{\n{}\n}}",
                     get_capnp_type(&self.for_type, SerdeTrait::WriteTo).to_code(),
                     get_idiomatic_type_name(&self.for_type).to_code(),
                     "<impl...>"
                 );
+                */
             }
+        }
+    }
+}
+
+impl ToCode for SerdeTrait {
+    fn to_code(&self) -> String {
+        match self {
+            SerdeTrait::ReadFrom => indoc!(
+                "pub trait ReadFrom<T>: Sized {
+                    fn read_from(src : &T) -> Result<Self, Error>;
+                }"
+            ).to_string(),
+            SerdeTrait::WriteTo => indoc!(
+                "pub trait WriteTo<T> {
+                    fn write_to(&self, dst : &mut T);
+                }"
+            ).to_string()
         }
     }
 }
@@ -1139,8 +1174,11 @@ impl ToCode for Impl {
 impl ToCode for ModuleElement {
     fn to_code(&self) -> String {
         match self {
+            ModuleElement::UseDecl(s) => format!("use {};", s),
+            ModuleElement::ExternCrateDecl(s) => format!("extern crate {};", s),
             ModuleElement::Module(m) => m.to_code(),
             ModuleElement::TypeDef(t) => t.to_code(),
+            ModuleElement::TraitDef(t) => t.to_code(),
             ModuleElement::Impl(i) => i.to_code()
         }
     }
@@ -1154,7 +1192,6 @@ impl ToCode for Module {
 
         return format!(
             "pub mod {} {{\n\
-            \tuse crate::getset::{{Getters, CopyGetters, MutGetters, Setters}};\n\
             \t{}\n}}",
             self.name().to_snake_case(RESERVED),
             self.elements()
@@ -1169,13 +1206,16 @@ impl ToCode for Module {
 }
 
 fn is_trivial_module(m: &Module) -> bool {
-    // If there are any elements that are not modules this is a non-trivial module.
+    // If there are any elements that are non-trivial, this is a non-trivial module.
     if m.elements()
         .iter()
         .filter(|e| {
             match e {
+                ModuleElement::UseDecl(_) => false,
+                ModuleElement::ExternCrateDecl(_) => false,
                 ModuleElement::Module(_) => false,
                 ModuleElement::TypeDef(_) => true,
+                ModuleElement::TraitDef(_) => true,
                 ModuleElement::Impl(_) => true,
             }
         })
@@ -1199,9 +1239,11 @@ fn is_trivial_module(m: &Module) -> bool {
 
 impl ToCode for RustAst {
     fn to_code(&self) -> String {
-        let imports =
-        "#[macro_use] extern crate derive_more;\n\
-        extern crate getset;\n\n\n";
+        let imports = indoc!("
+            use crate::getset::{Getters, CopyGetters, MutGetters, Setters};
+            use capnp::Error;
+            \n\n"
+        );
 
         let modules = self.defs.iter()
             .map(|m| m.to_code())
