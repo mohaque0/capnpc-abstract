@@ -201,6 +201,14 @@ impl Name {
         return Name { tokens: names };
     }
 
+    fn with_prepended(&self, prepended_token: &str) -> Name {
+        let mut tokens = vec!(prepended_token.to_string());
+        for token in self.tokens.clone() {
+            tokens.push(token);
+        }
+        return Name { tokens: tokens };
+    }
+
     fn check_reserved(s: String, reserved: &[&str]) -> String {
         for k in reserved {
             if &s.as_str() == k {
@@ -1085,7 +1093,11 @@ impl ToCode for Impl {
                     if field_name == "which" {
                         format!("{}::read_from(&src)?", name.to_code())
                     } else {
-                        format!("{}::read_from(&src.get_{}()?)?", name.to_code(), field_name)
+                        format!(
+                            "{}::read_from(&src.{}()?)?",
+                            name.to_code(),
+                            f.name.with_prepended("get").to_snake_case(RESERVED)
+                        )
                     }
                 },
                 _ => format!("src.get_{}()", f.name.to_snake_case(RESERVED))
