@@ -145,6 +145,8 @@ pub struct Module {
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
 #[get]
 pub struct RustAst {
+    external_crate_decls: Vec<String>,
+    external_mod_decls: Vec<String>,
     defs: Vec<Module>
 }
 
@@ -306,9 +308,13 @@ impl TranslationContext {
         return c;
     }
 
+    fn generate_capnp_mod_from_filename(filename: &String) -> Name {
+        return Name::from(&filename.to_lowercase().replace(".", "_"));
+    }
+
     fn generate_capnp_type_name(&self, type_name: &Name) -> FullyQualifiedName {
         // The first name in the fully qualified name is replaced with something based on the filename.
-        let mut fully_qualified_name = vec!(Name::from(&self.filename.to_lowercase().replace(".", "_")));
+        let mut fully_qualified_name = vec!(TranslationContext::generate_capnp_mod_from_filename(&self.filename));
 
         let remaining_names = match self.module_path.split_first() {
             Some((_, tail)) => tail.to_vec(),
@@ -337,12 +343,22 @@ impl Translator<crate::parser::ast::CodeGeneratorRequest> for RustAst  {
         let mut ctx = ctx.clone();
         ctx = build_translation_context_from_cgr(&mut ctx, cgr);
 
+        let mut external_mod_decls = vec!();
         let mut defs = vec!();
         for node in cgr.nodes().iter().filter(|x| x.which() == &crate::parser::ast::node::Which::File) {
-            defs.push(Module::translate(&ctx.clone_with_filename(get_filename_from_cgr(cgr, node.id())), node));
+            let filename = get_filename_from_cgr(cgr, node.id());
+            external_mod_decls.push(TranslationContext::generate_capnp_mod_from_filename(&filename).to_snake_case(RESERVED));
+            defs.push(Module::translate(&ctx.clone_with_filename(filename), node));
         }
 
-        return RustAst { defs: defs };
+        return RustAst {
+            external_crate_decls: vec!(
+                "#[macro_use] extern crate derive_more;".to_string(),
+                "extern crate getset;".to_string()
+            ),
+            external_mod_decls: external_mod_decls,
+            defs: defs
+        };
     }
 }
 
@@ -732,7 +748,7 @@ impl Resolver for RustAst {
         for def in &n.defs {
             defs.push(Module::resolve(&ctx, &def));
         }
-        return RustAst::new(defs);
+        return RustAst::new(n.external_crate_decls.clone(), n.external_mod_decls.clone(), defs);
     }
 }
 
@@ -803,7 +819,7 @@ impl RustAst {
             Module::generate_serde(&ctx, &mut serde_module, &def);
         }
         defs.push(serde_module);
-        return RustAst::new(defs);
+        return RustAst::new(n.external_crate_decls.clone(), n.external_mod_decls.clone(), defs);
     }
 }
 
@@ -1251,11 +1267,14 @@ fn is_trivial_module(m: &Module) -> bool {
 
 impl ToCode for RustAst {
     fn to_code(&self) -> String {
-        let imports = indoc!("
-            use crate::getset::{Getters, CopyGetters, MutGetters, Setters};
-            use capnp::Error;
-            \n\n"
-        );
+        let external_crate_decls = self.external_crate_decls.join("\n");
+        let external_mod_decls = self.external_mod_decls.iter()
+            // TODO: This is a hack. The most reasonable correct solution might be to look into the
+            // directory to see what files exist. Or to take this explicitly as an environment variable.
+            .filter(|m| m != &&"_capnp_c_plus_plus_capnp".to_string())
+            .map(|m| format!("pub mod {};", m))
+            .collect::<Vec<String>>()
+            .join("\n");
 
         let modules = self.defs.iter()
             .map(|m| m.to_code())
@@ -1263,6 +1282,6 @@ impl ToCode for RustAst {
             .collect::<Vec<String>>()
             .join("\n\n");
 
-        return format!("{}{}", imports, modules);
+        return format!("{}\n\n{}\n\n{}", external_crate_decls, external_mod_decls, modules);
     }
 }
