@@ -269,6 +269,9 @@ impl TypeDef {
 #[derive(Clone, Getters, CopyGetters, MutGetters, Setters, Debug, PartialEq)]
 pub struct TranslationContext {
     #[get]
+    existing_modules_in_out_dir: Vec<String>,
+
+    #[get]
     #[set]
     filename: String,
 
@@ -294,8 +297,9 @@ pub trait Translator<AST> {
 }
 
 impl TranslationContext {
-    pub fn new() -> TranslationContext {
+    pub fn new(existing_modules_in_out_dir: Vec<String>) -> TranslationContext {
         return TranslationContext {
+            existing_modules_in_out_dir: existing_modules_in_out_dir,
             filename: String::new(),
             module_path: vec!(),
             names: HashMap::new(),
@@ -358,6 +362,14 @@ impl Translator<crate::parser::ast::CodeGeneratorRequest> for RustAst  {
             external_mod_decls.push(TranslationContext::generate_capnp_mod_from_filename(&filename).to_snake_case(RESERVED));
             defs.push(Module::translate(&ctx.clone_with_filename(filename), node));
         }
+
+        println!("{:?}", ctx.existing_modules_in_out_dir());
+
+        let external_mod_decls = external_mod_decls
+            .iter()
+            .filter(|s| ctx.existing_modules_in_out_dir().contains(s))
+            .map(|s| s.clone())
+            .collect::<Vec<_>>();
 
         return RustAst {
             external_crate_decls: vec!(
@@ -1485,9 +1497,6 @@ impl ToCode for RustAst {
     fn to_code(&self) -> String {
         let external_crate_decls = self.external_crate_decls.join("\n");
         let external_mod_decls = self.external_mod_decls.iter()
-            // TODO: This is a hack. The most reasonable correct solution might be to look into the
-            // directory to see what files exist. Or to take this explicitly as an environment variable.
-            .filter(|m| m != &&"_capnp_c_plus_plus_capnp".to_string())
             .map(|m| format!("pub mod {};", m))
             .collect::<Vec<String>>()
             .join("\n");
