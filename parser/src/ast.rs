@@ -1,12 +1,43 @@
 use getset::{Getters, CopyGetters, Setters};
 
+type Id = u64;
+
 #[derive(Clone, Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
 #[get = "pub"]
 pub struct CodeGeneratorRequest {
-    nodes: Vec<Node>
+    nodes: Vec<Node>,
+    requested_files: Vec<code_generator_request::RequestedFile>
 }
 
-type Id = u64;
+pub mod code_generator_request {
+    use super::*;
+
+    #[derive(Clone, Constructor, Getters, CopyGetters, Setters, Default, Debug, PartialEq)]
+    pub struct RequestedFile {
+        #[get_copy = "pub"]
+        id: Id,
+
+        #[get = "pub"]
+        filename: String,
+
+        #[get = "pub"]
+        imports: Vec<requested_file::Import>
+    }
+
+    pub mod requested_file {
+        use super::*;
+
+        #[derive(Clone, Constructor, Getters, CopyGetters, Setters, Default, Debug, PartialEq)]
+        pub struct Import {
+            #[get_copy = "pub"]
+            id: Id,
+
+            #[get = "pub"]
+            name: String
+        }
+    }
+}
+
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Type {
