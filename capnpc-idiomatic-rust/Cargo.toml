@@ -1,5 +1,5 @@
 [package]
-name = "capnpc-abstract-rust"
+name = "capnpc-idiomatic-rust"
 version = "0.1.0"
 authors = ["mohaque <44129090+mohaque0@users.noreply.github.com>"]
 edition = "2018"

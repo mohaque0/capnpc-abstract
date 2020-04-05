@@ -1301,7 +1301,7 @@ impl ToCode for Impl {
                     .replace("#TGT_TYPE", t.to_code().as_str())
                 ,
                 Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
-                Type::RefName(name, type_def) => {
+                Type::RefName(_, type_def) => {
                     if let TypeDef::Enum(e) = type_def {
                         if e.enum_origin() == EnumOrigin::WhichForPartialUnion {
                             return format!(
