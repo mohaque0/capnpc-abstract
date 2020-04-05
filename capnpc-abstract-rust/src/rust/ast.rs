@@ -41,7 +41,7 @@ pub enum Type {
     String,
     List(Box<Type>),
     RefId(Id),
-    RefName(FullyQualifiedName)
+    RefName(FullyQualifiedName, TypeDef)
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
@@ -124,7 +124,6 @@ pub struct Impl {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModuleElement {
-    ExternCrateDecl(String),
     UseDecl(String),
     TypeDef(TypeDef),
     TraitDef(SerdeTrait),
@@ -172,7 +171,7 @@ impl Type {
             Type::String => false,
             Type::List(_) => false,
             Type::RefId(_) => false,
-            Type::RefName(_) => false
+            Type::RefName(_, _) => false
         }
     }
 }
@@ -250,6 +249,15 @@ impl FullyQualifiedName {
         new_names.push(subname.clone());
         FullyQualifiedName {
             names: new_names
+        }
+    }
+}
+
+impl TypeDef {
+    fn is_simple_enum(&self) -> bool {
+        match self {
+            TypeDef::Enum(e) => e.enumerants.iter().all(|enumerant| enumerant.rust_type == Type::Unit),
+            TypeDef::Struct(_) => false
         }
     }
 }
@@ -602,7 +610,11 @@ fn get_filename_from_cgr(cgr: &crate::parser::ast::CodeGeneratorRequest, id: Id)
 pub struct ResolutionContext {
     #[get]
     #[get_mut]
-    types: HashMap<Id, Vec<Name>>
+    type_names: HashMap<Id, Vec<Name>>,
+
+    #[get]
+    #[get_mut]
+    types: HashMap<Id, TypeDef>
 }
 
 pub trait Resolver : Sized {
@@ -613,6 +625,7 @@ pub trait Resolver : Sized {
 impl ResolutionContext {
     pub fn new() -> ResolutionContext {
         return ResolutionContext {
+            type_names : HashMap::new(),
             types : HashMap::new()
         }
     }
@@ -622,7 +635,10 @@ impl Resolver for Type {
     fn build_context(_: &mut ResolutionContext, _: &Self) {}
     fn resolve(ctx: &ResolutionContext, n: &Self) -> Self {
         if let Type::RefId(id) = n {
-            return Type::RefName(FullyQualifiedName::new(ctx.types().get(id).unwrap().clone()));
+            return Type::RefName(
+                FullyQualifiedName::new(ctx.type_names().get(id).unwrap().clone()),
+                ctx.types().get(id).unwrap().clone()
+            );
         }
         if let Type::List(t) = n {
             return Type::List(Box::new(Type::resolve(ctx, &*t)));
@@ -647,7 +663,8 @@ impl Resolver for Field {
 
 impl Resolver for Enum {
     fn build_context(ctx: &mut ResolutionContext, n: &Self) {
-        ctx.types_mut().insert(n.id(), vec!(n.name().clone()));
+        ctx.types_mut().insert(n.id(), TypeDef::Enum(n.clone()));
+        ctx.type_names_mut().insert(n.id(), vec!(n.name().clone()));
     }
     fn resolve(ctx: &ResolutionContext, n: &Self) -> Self {
         return Enum::new(
@@ -663,7 +680,8 @@ impl Resolver for Enum {
 
 impl Resolver for Struct {
     fn build_context(ctx: &mut ResolutionContext, n: &Self) {
-        ctx.types_mut().insert(n.id(), vec!(n.name().clone()));
+        ctx.types_mut().insert(n.id(), TypeDef::Struct(n.clone()));
+        ctx.type_names_mut().insert(n.id(), vec!(n.name().clone()));
     }
     fn resolve(ctx: &ResolutionContext, n: &Self) -> Self {
         return Struct::new(
@@ -698,7 +716,6 @@ impl Resolver for ModuleElement {
     fn build_context(ctx: &mut ResolutionContext, n: &Self) {
         match n {
             ModuleElement::UseDecl(_) => {}
-            ModuleElement::ExternCrateDecl(_) => {}
             ModuleElement::TypeDef(def) => TypeDef::build_context(ctx, def),
             ModuleElement::Module(m) => Module::build_context(ctx, m),
             ModuleElement::TraitDef(_) => {}
@@ -708,7 +725,6 @@ impl Resolver for ModuleElement {
     fn resolve(ctx: &ResolutionContext, n: &Self) -> Self {
         match n {
             ModuleElement::UseDecl(_) => n.clone(),
-            ModuleElement::ExternCrateDecl(_) => n.clone(),
             ModuleElement::TypeDef(def) => ModuleElement::TypeDef(TypeDef::resolve(ctx, def)),
             ModuleElement::Module(m) => ModuleElement::Module(Module::resolve(ctx, m)),
             ModuleElement::TraitDef(_) => n.clone(),
@@ -723,10 +739,11 @@ impl Resolver for Module {
 
         n.elements().iter().for_each(|x| { ModuleElement::build_context(&mut sub_ctx, x) });
 
-        for (key, value) in sub_ctx.types() {
+        for (key, value) in sub_ctx.type_names() {
             let mut names = vec!(n.name().clone());
             value.iter().for_each(|name| { names.push(name.clone()) });
-            ctx.types_mut().insert(*key, names);
+            ctx.type_names_mut().insert(*key, names);
+            ctx.types_mut().insert(*key, sub_ctx.types().get(key).unwrap().clone());
         }
     }
 
@@ -790,7 +807,6 @@ impl SerdeGenerator<Module> for Module {
         for element in n.elements() {
             match element {
                 ModuleElement::UseDecl(_) => {}
-                ModuleElement::ExternCrateDecl(_) => {}
                 ModuleElement::Module(m) => Module::generate_serde(ctx, serde_module, &m),
                 ModuleElement::TypeDef(t) => {
                     serde_module.elements_mut().push(
@@ -872,7 +888,7 @@ impl ToCode for Type {
             Type::String => String::from("String"),
             Type::List(t) => format!("Vec<{}>", t.to_code()),
             Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
-            Type::RefName(name) => name.to_code()
+            Type::RefName(name, _) => name.to_code()
         }
     }
 }
@@ -992,7 +1008,7 @@ impl ToCode for Impl {
                     .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
                     .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str())
                     .replace("#DATA_TYPE", (*t).to_code().as_str()),
-                Type::RefName(name) =>
+                Type::RefName(name, _) =>
                     indoc!(
                         "Ok(#CAPNP_WHICH::#ENUMERANT_NAME(data)) => {
                             let data = data?;
@@ -1109,7 +1125,7 @@ impl ToCode for Impl {
                     .replace("#TGT_TYPE", t.to_code().as_str())
                 ,
                 Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
-                Type::RefName(name) => {
+                Type::RefName(name, _) => {
                     let field_name = f.name.to_snake_case(RESERVED);
                     if field_name == "which" {
                         format!("{}::read_from(&src)?", name.to_code())
@@ -1190,15 +1206,26 @@ impl ToCode for Impl {
                     .replace("#ENUMERANT_INIT_NAME", enumerant.name().with_prepended("init").to_snake_case(RESERVED).as_str())
                     .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str())
                     .replace("#DATA_TYPE", (*t).to_code().as_str()),
-                Type::RefName(name) =>
-                    indoc!(
-                        "#IDIOMATIC_NAME::#ENUMERANT_NAME(data) => {
-                            data.write_to(&mut dst.reborrow().#ENUMERANT_INIT_NAME());
-                        }"
-                    )
-                    .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
-                    .replace("#ENUMERANT_INIT_NAME", enumerant.name().with_prepended("init").to_snake_case(RESERVED).as_str())
-                    .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
+                Type::RefName(_, typedef) =>
+                    if typedef.is_simple_enum() {
+                        indoc!(
+                            "#IDIOMATIC_NAME::#ENUMERANT_NAME(data) => {
+                                dst.reborrow().#ENUMERANT_SET_NAME(data.convert())
+                            }"
+                        )
+                        .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                        .replace("#ENUMERANT_SET_NAME", enumerant.name().with_prepended("set").to_snake_case(RESERVED).as_str())
+                        .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str())
+                    } else {
+                        indoc!(
+                            "#IDIOMATIC_NAME::#ENUMERANT_NAME(data) => {
+                                data.write_to(&mut dst.reborrow().#ENUMERANT_INIT_NAME());
+                            }"
+                        )
+                        .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                        .replace("#ENUMERANT_INIT_NAME", enumerant.name().with_prepended("init").to_snake_case(RESERVED).as_str())
+                        .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str())
+                    },
                 Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
                 _ => String::from("#ENUM_CASE")
             }
@@ -1209,8 +1236,7 @@ impl ToCode for Impl {
             let idiomatic_type = get_idiomatic_type_name(&impl_info.for_type);
 
             return indoc!(
-                "\t// #generate_enum_writer_for_capnp_enum
-                fn convert(&self) -> #TGT_TYPE {
+                "\tfn convert(&self) -> #TGT_TYPE {
                     match &self {
                         #ENUMERANTS
                     }
@@ -1237,8 +1263,7 @@ impl ToCode for Impl {
             let idiomatic_type = get_idiomatic_type_name(&impl_info.for_type);
 
             return indoc!(
-                "\t// #generate_enum_writer_for_capnp_struct
-                fn write_to(&self, dst: &mut #TGT_TYPE) {
+                "\tfn write_to(&self, dst: &mut #TGT_TYPE) {
                     match &self {
                         #ENUMERANTS
                     }
@@ -1276,7 +1301,16 @@ impl ToCode for Impl {
                     .replace("#TGT_TYPE", t.to_code().as_str())
                 ,
                 Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
-                Type::RefName(name) => {
+                Type::RefName(name, type_def) => {
+                    if let TypeDef::Enum(e) = type_def {
+                        if e.enum_origin() == EnumOrigin::WhichForPartialUnion {
+                            return format!(
+                                "self.{}().write_to(&mut dst.reborrow());",
+                                f.name.to_snake_case(RESERVED)
+                            )
+                        }
+                    }
+
                     format!(
                         "self.{}().write_to(&mut dst.reborrow().{}());",
                         f.name.to_snake_case(RESERVED),
@@ -1387,7 +1421,6 @@ impl ToCode for ModuleElement {
     fn to_code(&self) -> String {
         match self {
             ModuleElement::UseDecl(s) => format!("use {};", s),
-            ModuleElement::ExternCrateDecl(s) => format!("extern crate {};", s),
             ModuleElement::Module(m) => m.to_code(),
             ModuleElement::TypeDef(t) => t.to_code(),
             ModuleElement::TraitDef(t) => t.to_code(),
@@ -1424,7 +1457,6 @@ fn is_trivial_module(m: &Module) -> bool {
         .filter(|e| {
             match e {
                 ModuleElement::UseDecl(_) => false,
-                ModuleElement::ExternCrateDecl(_) => false,
                 ModuleElement::Module(_) => false,
                 ModuleElement::TypeDef(_) => true,
                 ModuleElement::TraitDef(_) => true,
