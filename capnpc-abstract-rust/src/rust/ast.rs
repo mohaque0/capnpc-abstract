@@ -941,6 +941,35 @@ impl ToCode for TypeDef {
 impl ToCode for Impl {
     fn to_code(&self) -> String {
 
+        fn get_capnp_type(t: &TypeDef, serde_trait: SerdeTrait) -> FullyQualifiedName {
+            // If this was derived directly from an enum, it has no Reader or Builder.
+            if let TypeDef::Enum(e) = t {
+                if e.enum_origin() == EnumOrigin::Enum {
+                    return e.capnp_type_name().clone();
+                }
+            }
+
+            let reader_or_writer = match serde_trait {
+                SerdeTrait::ReadFrom => String::from("Reader<'_>"),
+                SerdeTrait::WriteTo => String::from("Builder<'_>"),
+            };
+            match t {
+                TypeDef::Enum(e) => e.capnp_type_name().clone(),
+                TypeDef::Struct(s) => s.capnp_type_name().clone()
+            }.with(&Name::from(&reader_or_writer))
+        };
+
+        fn get_idiomatic_type_name(t: &TypeDef) -> FullyQualifiedName {
+            match t {
+                TypeDef::Enum(e) => e.fully_qualified_type_name().clone(),
+                TypeDef::Struct(s) => s.fully_qualified_type_name().clone()
+            }
+        };
+
+        //
+        // Reading Functions
+        //
+
         fn enumerant_to_read_case(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
             return match &enumerant.rust_type() {
                 Type::Unit =>
@@ -979,30 +1008,6 @@ impl ToCode for Impl {
             }
         }
 
-        fn get_capnp_type(t: &TypeDef, serde_trait: SerdeTrait) -> FullyQualifiedName {
-            // If this was derived directly from an enum, it has no Reader or Builder.
-            if let TypeDef::Enum(e) = t {
-                if e.enum_origin() == EnumOrigin::Enum {
-                    return e.capnp_type_name().clone();
-                }
-            }
-
-            let reader_or_writer = match serde_trait {
-                SerdeTrait::ReadFrom => String::from("Reader<'_>"),
-                SerdeTrait::WriteTo => String::from("Builder<'_>"),
-            };
-            match t {
-                TypeDef::Enum(e) => e.capnp_type_name().clone(),
-                TypeDef::Struct(s) => s.capnp_type_name().clone()
-            }.with(&Name::from(&reader_or_writer))
-        };
-
-        fn get_idiomatic_type_name(t: &TypeDef) -> FullyQualifiedName {
-            match t {
-                TypeDef::Enum(e) => e.fully_qualified_type_name().clone(),
-                TypeDef::Struct(s) => s.fully_qualified_type_name().clone()
-            }
-        };
 
         fn generate_enum_reader_for_capnp_enum(impl_info: &Impl, e: &Enum) -> String {
             let capnp_reader_type = get_capnp_type(&impl_info.for_type, SerdeTrait::ReadFrom);
@@ -1158,6 +1163,172 @@ impl ToCode for Impl {
             }
         };
 
+        //
+        // Writing Functions
+        //
+
+        fn enumerant_to_write_case(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
+            return match &enumerant.rust_type() {
+                Type::Unit =>
+                    format!("#IDIOMATIC_NAME::#ENUMERANT_NAME => #CAPNP_TYPE::#ENUMERANT_NAME")
+                    .replace("#CAPNP_TYPE", capnp_enum_type.to_code().as_str())
+                    .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                    .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
+                Type::List(t) => 
+                    indoc!(
+                        "#IDIOMATIC_NAME::#ENUMERANT_NAME(data) => {
+                            let mut dst_items = dst.reborrow().#ENUMERANT_INIT_NAME(data.len() as u32);
+                            let mut i = 0;
+                            for datum in data {
+                                let converted_datum = #DATA_TYPE::convert(&datum);
+                                dst_items.set(i, converted_datum);
+                                i = i + 1;
+                            }
+                        }"
+                    )
+                    .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                    .replace("#ENUMERANT_INIT_NAME", enumerant.name().with_prepended("init").to_snake_case(RESERVED).as_str())
+                    .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str())
+                    .replace("#DATA_TYPE", (*t).to_code().as_str()),
+                Type::RefName(name) =>
+                    indoc!(
+                        "#IDIOMATIC_NAME::#ENUMERANT_NAME(data) => {
+                            data.write_to(&mut dst.reborrow().#ENUMERANT_INIT_NAME());
+                        }"
+                    )
+                    .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                    .replace("#ENUMERANT_INIT_NAME", enumerant.name().with_prepended("init").to_snake_case(RESERVED).as_str())
+                    .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
+                Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
+                _ => String::from("#ENUM_CASE")
+            }
+        }
+
+        fn generate_enum_writer_for_capnp_enum(impl_info: &Impl, e: &Enum) -> String {
+            let capnp_writer_type = get_capnp_type(&impl_info.for_type, SerdeTrait::WriteTo);
+            let idiomatic_type = get_idiomatic_type_name(&impl_info.for_type);
+
+            return indoc!(
+                "\t// #generate_enum_writer_for_capnp_enum
+                fn convert(&self) -> #TGT_TYPE {
+                    match &self {
+                        #ENUMERANTS
+                    }
+                }"
+                )
+                .replace("#TGT_TYPE", capnp_writer_type.to_code().as_str())
+                .replace("#SRC_TYPE", idiomatic_type.to_code().as_str())
+                .replace(
+                    "#ENUMERANTS",
+                    e.enumerants()
+                        .iter()
+                        .map(|enumerant| enumerant_to_write_case(enumerant, e.capnp_type_name(), &idiomatic_type))
+                        .collect::<Vec<String>>()
+                        .join(",\n")
+                        .replace("\n", "\n\t\t")
+                        .as_str()
+                )
+                .replace("    ", "\t")
+                .replace("\n", "\n\t");
+        }
+
+        fn generate_enum_writer_for_capnp_struct(impl_info: &Impl, e: &Enum) -> String {
+            let capnp_writer_type = get_capnp_type(&impl_info.for_type, SerdeTrait::WriteTo);
+            let idiomatic_type = get_idiomatic_type_name(&impl_info.for_type);
+
+            return indoc!(
+                "\t// #generate_enum_writer_for_capnp_struct
+                fn write_to(&self, dst: &mut #TGT_TYPE) {
+                    match &self {
+                        #ENUMERANTS
+                    }
+                }")
+                .replace("#TGT_TYPE", capnp_writer_type.to_code().as_str())
+                .replace("#SRC_TYPE", idiomatic_type.to_code().as_str())
+                .replace(
+                    "#ENUMERANTS",
+                    e.enumerants()
+                        .iter()
+                        .map(|enumerant| enumerant_to_write_case(enumerant, e.capnp_type_name(), &idiomatic_type))
+                        .collect::<Vec<String>>()
+                        .join(",\n")
+                        .replace("\n", "\n\t\t")
+                        .as_str()
+                )
+                .replace("    ", "\t")
+                .replace("\n", "\n\t");
+        }
+
+        fn get_field_writer(f: &Field) -> String {
+            return match f.rust_type() {
+                Type::Unit => panic!("Unsupported type for struct field: Unit"),
+                Type::List(t) => indoc!(
+                        "{
+                            let mut items = dst.reborrow().init_#FIELD_NAME(self.#FIELD_NAME().len() as u32);
+                            let mut i = 0;
+                            for src in self.#FIELD_NAME() {
+                                src.write_to(&mut items.reborrow().get(i));
+                                i = i + 1;
+                            };
+                        }"
+                    )
+                    .replace("#FIELD_NAME", f.name.to_snake_case(RESERVED).as_str())
+                    .replace("#TGT_TYPE", t.to_code().as_str())
+                ,
+                Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
+                Type::RefName(name) => {
+                    format!(
+                        "self.{}().write_to(&mut dst.reborrow().{}());",
+                        f.name.to_snake_case(RESERVED),
+                        f.name.with_prepended("init").to_snake_case(RESERVED)
+                    )
+                },
+                _ =>
+                    "dst.set_#FIELD_NAME(self.#FIELD_NAME());"
+                    .replace("#FIELD_NAME", &f.name.to_snake_case(RESERVED))
+            }
+        };
+
+        let get_write_impl_for_type = |t: &TypeDef| -> String {
+            let capnp_writer_type = get_capnp_type(&self.for_type, SerdeTrait::WriteTo);
+            let idiomatic_type = get_idiomatic_type_name(&self.for_type);
+
+            match t {
+                TypeDef::Enum(e) => {
+                    match e.enum_origin() {
+                        EnumOrigin::Enum => generate_enum_writer_for_capnp_enum(self, &e),
+                        EnumOrigin::Struct => generate_enum_writer_for_capnp_struct(self, &e),
+                        EnumOrigin::WhichForPartialUnion => generate_enum_writer_for_capnp_struct(self, &e)
+                    }
+                },
+                TypeDef::Struct(s) => {
+                    return indoc!(
+                        "\tfn write_to(&self, dst: &mut #TGT_TYPE) {
+                            #SET_FIELDS
+                        }"
+                    )
+                    .replace("#TGT_TYPE", capnp_writer_type.to_code().as_str())
+                    .replace("#SRC_TYPE", idiomatic_type.to_code().as_str())
+                    .replace(
+                        "#SET_FIELDS",
+                        s.fields()
+                            .iter()
+                            .map(get_field_writer)
+                            .collect::<Vec<String>>()
+                            .join("\n")
+                            .replace("\n", "\n\t")
+                            .as_str()
+                    )
+                    .replace("    ", "\t")
+                    .replace("\n", "\n\t");
+                }
+            }
+        };
+
+        //
+        // Output
+        //
+
         match self.trait_type {
             SerdeTrait::ReadFrom => {
                 return format!(
@@ -1168,15 +1339,23 @@ impl ToCode for Impl {
                 );
             },
             SerdeTrait::WriteTo => {
-                return format!("");
-                /*
+                if let TypeDef::Enum(e) = &self.for_type {
+                    if e.enum_origin() == EnumOrigin::Enum {
+                        return format!(
+                            "impl crate::serde::ConvertTo<{}> for {} {{\n{}\n}}",
+                            get_capnp_type(&self.for_type, SerdeTrait::WriteTo).to_code(),
+                            get_idiomatic_type_name(&self.for_type).to_code(),
+                            get_write_impl_for_type(&self.for_type)
+                        );
+                    }
+                }
+
                 return format!(
                     "impl crate::serde::WriteTo<{}> for {} {{\n{}\n}}",
                     get_capnp_type(&self.for_type, SerdeTrait::WriteTo).to_code(),
                     get_idiomatic_type_name(&self.for_type).to_code(),
-                    "<impl...>"
+                    get_write_impl_for_type(&self.for_type)
                 );
-                */
             }
         }
     }
@@ -1193,7 +1372,12 @@ impl ToCode for SerdeTrait {
             SerdeTrait::WriteTo => indoc!(
                 "pub trait WriteTo<T> {
                     fn write_to(&self, dst : &mut T);
-                }"
+                }
+                
+                pub trait ConvertTo<T> {
+                    fn convert(&self) -> T;
+                }
+                "
             ).to_string()
         }
     }
