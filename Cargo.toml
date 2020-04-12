@@ -1,5 +1,6 @@
 [workspace]
 members = [
-    "parser",
-    "capnpc-idiomatic-rust"
+    "capnpc-idiomatic-cpp",
+    "capnpc-idiomatic-rust",
+    "parser"
 ]

@@ -38,6 +38,14 @@ pub mod code_generator_request {
     }
 }
 
+#[derive(Clone, Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
+pub struct Annotation {
+    #[get_copy = "pub"]
+    id: Id,
+
+    #[get = "pub"]
+    value: Value
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Type {
@@ -62,6 +70,12 @@ pub enum Type {
     AnyPointer
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum Value {
+    Text(String),
+    Unknown
+}
+
 #[derive(Clone, Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]
 pub struct Node {
     #[get_copy = "pub"]
@@ -78,6 +92,9 @@ pub struct Node {
 
     #[get = "pub"]
     nested_nodes: Vec<node::NestedNode>,
+
+    #[get = "pub"]
+    annotations: Vec<Annotation>,
 
     #[get = "pub"]
     which: node::Which

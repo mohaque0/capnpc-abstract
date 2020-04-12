@@ -113,11 +113,42 @@ impl ParseFrom<schema_capnp::node::nested_node::Reader<'_>> for ast::node::Neste
     }
 }
 
+impl ParseFrom<schema_capnp::value::Reader<'_>> for ast::Value {
+    fn parse(reader: schema_capnp::value::Reader) -> capnp::Result<ast::Value> {
+        Ok(
+            match reader.which()? {
+                schema_capnp::value::Which::Text(t) => {
+                    ast::Value::Text(String::from(t?))
+                },
+                _ => {
+                    ast::Value::Unknown
+                }
+            }
+        )
+    }
+}
+
+impl ParseFrom<schema_capnp::annotation::Reader<'_>> for ast::Annotation {
+    fn parse(reader: schema_capnp::annotation::Reader) -> capnp::Result<ast::Annotation> {
+        Ok(
+            ast::Annotation::new(
+                reader.get_id(),
+                ast::Value::parse(reader.get_value()?)?
+            )
+        )
+    }
+}
+
 impl ParseFrom<schema_capnp::node::Reader<'_>> for ast::Node {
     fn parse(reader: schema_capnp::node::Reader<'_>) -> capnp::Result<ast::Node> {
         let mut nested_nodes = vec!();
         for nested_node in reader.get_nested_nodes()?.iter() {
             nested_nodes.push(ast::node::NestedNode::parse(nested_node)?)
+        }
+
+        let mut annotations = vec!();
+        for annotation in reader.get_annotations()?.iter() {
+            annotations.push(ast::Annotation::parse(annotation)?)
         }
 
         return Ok(
@@ -127,6 +158,7 @@ impl ParseFrom<schema_capnp::node::Reader<'_>> for ast::Node {
                 reader.get_display_name_prefix_length() as usize,
                 reader.get_scope_id(),
                 nested_nodes,
+                annotations,
                 ast::node::Which::parse(reader.which()?)?
             )
         )
