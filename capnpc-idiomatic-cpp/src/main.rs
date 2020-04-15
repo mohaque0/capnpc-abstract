@@ -20,7 +20,7 @@ fn get_output_dir() -> PathBuf {
 }
 
 fn get_output_file() -> Result<File, Error> {
-    File::create(get_output_dir().with_file_name("lib.rs"))
+    File::create(get_output_dir().with_file_name("lib.cpp"))
 }
 
 fn main() -> Result<(), Error> {
