@@ -7,8 +7,7 @@ use indoc::indoc;
 use crate::cpp::ast::*;
 use parser::ast::CodeGeneratorRequest;
 
-#[derive(Clone, CopyGetters, Getters, Setters)]
-
+#[derive(Clone, CopyGetters, Getters, MutGetters, Setters)]
 pub struct Context {
     out_dir: PathBuf,
 
@@ -19,7 +18,16 @@ pub struct Context {
     name_annotation_id: u64,
 
     #[getset(get, set)]
-    namespace: FullyQualifiedName
+    namespace: FullyQualifiedName,
+
+    #[getset(get, get_mut)]
+    names: HashMap<Id, Name>,
+
+    #[getset(get, get_mut)]
+    children: MultiMap<Id, Id>,
+
+    #[getset(get, get_mut)]
+    nodes: HashMap<Id, crate::parser::ast::Node>
 }
 
 impl Context {
@@ -28,7 +36,10 @@ impl Context {
             out_dir: out_dir.clone(),
             namespace_annotation_id: 0,
             name_annotation_id: 0,
-            namespace: FullyQualifiedName::empty()
+            namespace: FullyQualifiedName::empty(),
+            names: HashMap::new(),
+            children: MultiMap::new(),
+            nodes: HashMap::new()
         }
     }
 
@@ -75,25 +86,77 @@ impl Context {
             panic!("Unable to determine name annotation id from c++.capnp.");
         }
     }
+
+    fn set_names_from(&mut self, cgr: &CodeGeneratorRequest) {
+        for node in cgr.nodes() {
+            if node.which() == &crate::parser::ast::node::Which::File {
+                let name = String::from(&node.display_name()[0..node.display_name_prefix_length()-1]);
+                self.names_mut().insert(
+                    node.id(),
+                    Name::from(&name)
+                );
+            }
+
+            for nested_node in node.nested_nodes() {
+                self.names_mut().insert(nested_node.id(), Name::from(nested_node.name()));
+            }
+
+            self.children_mut().insert(node.scope_id(), node.id());
+            self.nodes_mut().insert(node.id(), node.clone());
+        }
+    }
 }
 
+fn generate_header_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, node: &parser::ast::Node, namespace: &mut Namespace)
+{
+    use parser::ast::node::Which;
 
-fn generate_header_for_file_node(ctx: &Context, node: &parser::ast::Node, root: &mut Namespace) {
+    match node.which() {
+        Which::File => {},
+        Which::Struct { is_group, discriminant_count, discriminant_offset, fields } => {},
+        Which::Enum(enumerants) => {
+            namespace.defs_mut().push(
+                ComplexTypeDef::EnumClass(EnumClass::new(
+                    ctx.names.get(&node.id()).expect(&format!("Unable to determine name for node with id: {}", node.id())).clone(),
+                    enumerants.iter()
+                        .map(parser::ast::Enumerant::name)
+                        .map(|enumerant| Name::from(enumerant))
+                        .collect()
+                ))
+            );
+        },
+        Which::Interface => {},
+        Which::Const => {},
+        Which::Annotation => {}
+    }
+}
+
+fn generate_header_for_file_node(ctx: &Context, cgr: &CodeGeneratorRequest, node: &parser::ast::Node, root: &mut Namespace) {
     let namespace_annotation = node.annotations()
         .iter()
         .filter(|a| a.id() == ctx.namespace_annotation_id())
         .last()
         .expect("Missing namespace annotation for file.");
 
-    let namespace_path =
+    let namespace_name =
         if let parser::ast::Value::Text(t) = namespace_annotation.value() {
             t
         } else {
             panic!(format!("Namespace annotation for {} was not a string.", node.display_name()));
         };
 
-    let namespace = FullyQualifiedName::new(namespace_path.split("::").map(Name::from).collect());
-    root.get_or_create_namespace_mut(&namespace);
+    let namespace_path = FullyQualifiedName::new(namespace_name.split("::").map(Name::from).collect());
+    let mut namespace = root.get_or_create_namespace_mut(&namespace_path);
+
+    cgr.nodes()
+        .iter()
+        .filter(|potential_child| potential_child.scope_id() == node.id())
+        .for_each(|child| generate_header_type_for_node(
+            &ctx.with_namespace(&namespace_path),
+            cgr,
+            child, 
+            &mut namespace
+        ));
 }
 
 fn generate_header_body(ctx: &Context, cgr: &CodeGeneratorRequest) -> Namespace {
@@ -101,7 +164,7 @@ fn generate_header_body(ctx: &Context, cgr: &CodeGeneratorRequest) -> Namespace 
 
     cgr.nodes().iter()
         .filter(|node| node.which() == &parser::ast::node::Which::File)
-        .for_each(|node| generate_header_for_file_node(ctx, node, &mut root));
+        .for_each(|node| generate_header_for_file_node(ctx, cgr, node, &mut root));
 
     return root;
 }
@@ -120,7 +183,7 @@ fn generate_imports(cgr: &CodeGeneratorRequest) -> Vec<Import> {
 fn generate_header(ctx: &Context, cgr: &CodeGeneratorRequest) -> FileDef {
     FileDef::new(
         Name::from("lib"),
-        String::from("cpp"),
+        String::from("hpp"),
         generate_imports(cgr),
         generate_header_body(ctx, cgr)
     )
@@ -129,6 +192,7 @@ fn generate_header(ctx: &Context, cgr: &CodeGeneratorRequest) -> FileDef {
 pub fn translate(ctx: &Context, cgr: &CodeGeneratorRequest) -> CppAst {
     let mut ctx = ctx.clone();
     ctx.set_annotation_ids_from(&cgr);
+    ctx.set_names_from(&cgr);
 
     return CppAst::new(vec!(
         generate_header(&ctx, cgr)

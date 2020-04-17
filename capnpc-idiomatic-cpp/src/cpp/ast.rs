@@ -20,7 +20,7 @@ pub struct Name {
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
-#[get]
+#[get = "pub"]
 pub struct FullyQualifiedName {
     names: Vec<Name>
 }
@@ -43,21 +43,23 @@ pub enum CppType {
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
-#[get]
+#[get = "pub"]
 pub struct EnumClass {
+    name: Name,
     enumerants: Vec<Name>
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
-#[get]
+#[get = "pub"]
 pub struct Field {
     name: Name,
     cpp_type: CppType
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
-#[get]
+#[get = "pub"]
 pub struct Class {
+    name: Name,
     fields: Vec<Field>
 }
 
@@ -68,21 +70,21 @@ pub enum ComplexTypeDef {
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, MutGetters, Setters, Debug, PartialEq)]
-#[get]
-#[get_mut]
+#[get = "pub"]
+#[get_mut = "pub"]
 pub struct Namespace {
     defs: Vec<ComplexTypeDef>,
     namespaces: HashMap<Name, Namespace>
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
-#[get]
+#[get = "pub"]
 pub struct Import {
     text: String
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
-#[get]
+#[get = "pub"]
 pub struct FileDef {
     name: Name,
     ext: String,
@@ -91,7 +93,7 @@ pub struct FileDef {
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
-#[get]
+#[get = "pub"]
 pub struct CppAst {
     files: Vec<FileDef>
 }
@@ -124,7 +126,7 @@ impl Name {
         return Name { tokens: names, case: NameCase::Fixed };
     }
 
-    fn with_prepended(&self, prepended_token: &str) -> Name {
+    pub fn with_prepended(&self, prepended_token: &str) -> Name {
         let mut tokens = vec!(prepended_token.to_string());
         for token in self.tokens.clone() {
             tokens.push(token);
@@ -141,11 +143,11 @@ impl Name {
         return s;
     }
 
-    fn to_fixed_case(&self) -> String {
+    pub fn to_fixed_case(&self) -> String {
         return self.tokens.join("");
     }
 
-    fn to_snake_case(&self, reserved: &[&str]) -> String {
+    pub fn to_snake_case(&self, reserved: &[&str]) -> String {
         let s = self.tokens.iter()
             .map(|x| { x.to_lowercase() })
             .collect::<Vec<String>>().join("_");
@@ -153,7 +155,7 @@ impl Name {
         return Name::check_reserved(s, reserved);
     }
 
-    fn to_screaming_snake_case(&self,  reserved: &[&str]) -> String {
+    pub fn to_screaming_snake_case(&self,  reserved: &[&str]) -> String {
         let s = self.tokens.iter()
             .map(|x| { x.to_uppercase() })
             .collect::<Vec<String>>().join("_");
@@ -161,7 +163,7 @@ impl Name {
         return Name::check_reserved(s, reserved);
     }
 
-    fn to_upper_camel_case(&self, reserved: &[&str]) -> String {
+    pub fn to_upper_camel_case(&self, reserved: &[&str]) -> String {
         let s = self.tokens
             .iter()
             .map(|x| {
@@ -176,7 +178,7 @@ impl Name {
         return Name::check_reserved(s, reserved);
     }
 
-    fn to_lower_camel_case(&self, reserved: &[&str]) -> String {
+    pub fn to_lower_camel_case(&self, reserved: &[&str]) -> String {
         if self.tokens.len() == 0 {
             return String::new()
         }
@@ -216,6 +218,10 @@ impl FullyQualifiedName {
         FullyQualifiedName { names: vec!() }
     }
 
+    pub fn with_prepended(&self, name: &Name) -> FullyQualifiedName {
+        FullyQualifiedName { names: std::iter::once(name.clone()).chain(self.names().clone()).collect() }
+    }
+
     pub fn head(&self) -> Option<&Name> {
         if self.names.len() == 0 {
             return None;
@@ -232,6 +238,17 @@ impl FullyQualifiedName {
     }
 }
 
+impl From<Vec<&str>> for FullyQualifiedName {
+    fn from(names: Vec<&str>) -> FullyQualifiedName {
+        FullyQualifiedName { names: names.iter().map(|n| Name::from(&n)).collect() }
+    }
+}
+
+impl ToString for FullyQualifiedName {
+    fn to_string(&self) -> String {
+        self.names.iter().map(Name::to_string).collect::<Vec<String>>().join("::")
+    }
+}
 
 impl Namespace {
     pub fn empty() -> Namespace {
@@ -278,12 +295,25 @@ impl Namespace {
         }
     }
 
+    pub fn list_namespaces(&self) -> Vec<FullyQualifiedName> {
+        let mut ret : Vec<FullyQualifiedName> = vec!();
+        for (name, child) in self.namespaces() {
+            ret.extend(
+                child.list_namespaces().iter()
+                    .map({ let name = name.clone(); move |fqn| fqn.with_prepended(&name.clone())})
+                    .collect::<Vec<FullyQualifiedName>>()
+            );
+            ret.push(FullyQualifiedName::new(vec!(name.clone())));
+        }
+        ret
+    }
+
     pub fn get_or_create_namespace_mut(&mut self, name: &FullyQualifiedName) -> &mut Namespace {
         if name.names().len() == 0 {
             return self;
         }
 
-        if !self.contains_namespace(&name) {
+        if !self.namespaces.contains_key(&name.head().unwrap()) {
             self.create_empty_namespace(name.head().unwrap());
         }
 
@@ -321,5 +351,14 @@ mod tests {
         assert_eq!(String::from("helloWorld"), n.to_lower_camel_case(&[]));
         assert_eq!(String::from("hello_world"), n.to_snake_case(&[]));
         assert_eq!(String::from("HELLO_WORLD"), n.to_screaming_snake_case(&[]));
+    }
+
+    #[test]
+    fn test_namespace() {
+        let mut n = Namespace::empty();
+        n.get_or_create_namespace_mut(&FullyQualifiedName::from("Test::A".split("::").collect::<Vec<&str>>()));
+        n.get_or_create_namespace_mut(&FullyQualifiedName::from("Test::B".split("::").collect::<Vec<&str>>()));
+
+        assert_eq!(n.list_namespaces().len(), 3);
     }
 }

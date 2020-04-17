@@ -19,15 +19,15 @@ fn get_output_dir() -> PathBuf {
     }
 }
 
-fn get_output_file() -> Result<File, Error> {
-    File::create(get_output_dir().with_file_name("lib.cpp"))
-}
-
 fn main() -> Result<(), Error> {
     let capnp_ast = parser::read_message(&mut std::io::stdin());
-    let mut output = get_output_file()?;
     let code = cpp::code_gen(&get_output_dir(), &capnp_ast);
-    write!(output, "{}", code)?;
+
+    for (path, code) in code.files() {
+        println!("Writing file: {:#?}", path);
+        let mut file = File::create(path)?;
+        write!(file, "{}", code)?;
+    }
 
     Ok(())
 }
