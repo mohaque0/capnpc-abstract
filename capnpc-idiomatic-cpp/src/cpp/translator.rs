@@ -153,33 +153,49 @@ fn generate_refid_for_union_which(id: Id) -> Id {
     id + 1
 }
 
+fn generate_refid_for_union_data(id: Id) -> Id {
+    id + 2
+}
+
 fn generate_union_like_class(id: Id, name: &Name, fields: &Vec<parser::ast::Field>) -> Class {
 
     let which = EnumClass::new(
+        generate_refid_for_union_which(id),
         Name::from("Which"),
         fields.iter().map(translate_parser_field_to_enumerant).collect()
     );
 
     let union = Union::new(
+        generate_refid_for_union_data(id),
         Name::from(""),
         fields.iter().map(translate_parser_field_to_cpp_field).collect()
     );
 
     Class::new(
+        id,
         name.clone(),
         vec!(ComplexTypeDef::EnumClass(which), ComplexTypeDef::Union(union)),
         vec!(Field::new(Name::from("which"), CppType::RefId(generate_refid_for_union_which(id))))
     )
 }
 
-fn generate_header_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, node: &parser::ast::Node, namespace: &mut Namespace)
+fn generate_base_ast_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, node: &parser::ast::Node) -> ComplexTypeDef
 {
     use parser::ast::node::Which;
 
+    println!("Processing: {}", node.id());
+
     let name = ctx.names.get(&node.id()).expect(&format!("Unable to determine name for node with id: {}", node.id())).clone();
+    let mut inner_types = ctx.children()
+        .get_vec(&node.id())
+        .unwrap_or(&vec!())
+        .iter()
+        .map(|n|
+            generate_base_ast_type_for_node(ctx, cgr, ctx.nodes().get(n).unwrap())
+        ).collect::<Vec<ComplexTypeDef>>();
 
     match node.which() {
-        Which::File => {},
+        Which::File => panic!("Generating ast for file in incorrect area of the code."),
         Which::Struct { discriminant_count, fields, .. } => {
             if *discriminant_count as usize > 0 {
 
@@ -202,45 +218,49 @@ fn generate_header_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, node
                     }
                 }
 
-                let union = ComplexTypeDef::Union(Union::new(Name::from(""), union_fields));
+                let union = ComplexTypeDef::Union(Union::new(node.id(), Name::from(""), union_fields));
+                inner_types.push(union);
 
-                namespace.defs_mut().push(
-                    ComplexTypeDef::Class(Class::new(
-                        name.clone(),
-                        vec!(union),
-                        class_fields
-                    ))
+                let which = EnumClass::new(
+                    generate_refid_for_union_which(node.id()),
+                    Name::from("Which"),
+                    fields.iter().map(translate_parser_field_to_enumerant).collect()
                 );
+                inner_types.push(ComplexTypeDef::EnumClass(which));
+                
+                return ComplexTypeDef::Class(Class::new(
+                    node.id(),
+                    name.clone(),
+                    inner_types,
+                    class_fields
+                ));
 
             } else {
-
-                namespace.defs_mut().push(
-                    ComplexTypeDef::Class(Class::new(
-                        name.clone(),
-                        vec!(),
-                        fields.iter().map(translate_parser_field_to_cpp_field).collect()
-                    ))
-                );
+                return ComplexTypeDef::Class(Class::new(
+                    node.id(),
+                    name.clone(),
+                    inner_types,
+                    fields.iter().map(translate_parser_field_to_cpp_field).collect()
+                ));
             }
         },
         Which::Enum(enumerants) => {
-            namespace.defs_mut().push(
-                ComplexTypeDef::EnumClass(EnumClass::new(
-                    ctx.names.get(&node.id()).expect(&format!("Unable to determine name for node with id: {}", node.id())).clone(),
-                    enumerants.iter()
-                        .map(parser::ast::Enumerant::name)
-                        .map(|enumerant| Name::from(enumerant))
-                        .collect()
-                ))
-            );
+            return ComplexTypeDef::EnumClass(EnumClass::new(
+                node.id(),
+                name.clone(),
+                enumerants.iter()
+                    .map(parser::ast::Enumerant::name)
+                    .map(|enumerant| Name::from(enumerant))
+                    .collect()
+            ))
         },
-        Which::Interface => {},
-        Which::Const => {},
-        Which::Annotation => {}
+        Which::Interface => panic!("Interfaces are not supported."),
+        Which::Const => panic!("Constants are not supported."),
+        Which::Annotation => panic!("Generating ast for annotation in incorrect area of the code.")
     }
 }
 
-fn generate_header_for_file_node(ctx: &Context, cgr: &CodeGeneratorRequest, node: &parser::ast::Node, root: &mut Namespace) {
+fn generate_base_ast_for_file_node(ctx: &Context, cgr: &CodeGeneratorRequest, node: &parser::ast::Node, root: &mut Namespace) {
     let namespace_annotation = node.annotations()
         .iter()
         .filter(|a| a.id() == ctx.namespace_annotation_id())
@@ -255,17 +275,21 @@ fn generate_header_for_file_node(ctx: &Context, cgr: &CodeGeneratorRequest, node
         };
 
     let namespace_path = FullyQualifiedName::new(namespace_name.split("::").map(Name::from).collect());
-    let mut namespace = root.get_or_create_namespace_mut(&namespace_path);
+    let namespace = root.get_or_create_namespace_mut(&namespace_path);
 
     cgr.nodes()
         .iter()
         .filter(|potential_child| potential_child.scope_id() == node.id())
-        .for_each(|child| generate_header_type_for_node(
-            &ctx.with_namespace(&namespace_path),
-            cgr,
-            child, 
-            &mut namespace
-        ));
+        .filter(|potential_child| potential_child.which() != &parser::ast::node::Which::Annotation)
+        .for_each(
+            |child| 
+            namespace.defs_mut().push(
+                generate_base_ast_type_for_node(
+                &ctx.with_namespace(&namespace_path),
+                cgr,
+                child
+            ))
+        );
 }
 
 fn generate_base_ast(ctx: &Context, cgr: &CodeGeneratorRequest) -> Namespace {
@@ -273,7 +297,7 @@ fn generate_base_ast(ctx: &Context, cgr: &CodeGeneratorRequest) -> Namespace {
 
     cgr.nodes().iter()
         .filter(|node| node.which() == &parser::ast::node::Which::File)
-        .for_each(|node| generate_header_for_file_node(ctx, cgr, node, &mut root));
+        .for_each(|node| generate_base_ast_for_file_node(ctx, cgr, node, &mut root));
 
     return root;
 }

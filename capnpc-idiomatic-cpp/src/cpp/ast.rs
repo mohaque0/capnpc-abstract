@@ -49,6 +49,7 @@ pub enum CppType {
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
 #[get = "pub"]
 pub struct EnumClass {
+    id: Id,
     name: Name,
     enumerants: Vec<Name>
 }
@@ -63,6 +64,7 @@ pub struct Field {
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
 #[get = "pub"]
 pub struct Class {
+    id: Id,
     name: Name,
     inner_types: Vec<ComplexTypeDef>,
     fields: Vec<Field>
@@ -71,6 +73,7 @@ pub struct Class {
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
 #[get = "pub"]
 pub struct Union {
+    id: Id,
     name: Name,
     fields: Vec<Field>
 }
@@ -233,6 +236,12 @@ impl FullyQualifiedName {
 
     pub fn with_prepended(&self, name: &Name) -> FullyQualifiedName {
         FullyQualifiedName { names: std::iter::once(name.clone()).chain(self.names().clone()).collect() }
+    }
+
+    pub fn with_appended(&self, name: &Name) -> FullyQualifiedName {
+        let mut names = self.names().clone();
+        names.push(name.clone());
+        FullyQualifiedName { names: names }
     }
 
     pub fn head(&self) -> Option<&Name> {
