@@ -107,13 +107,122 @@ impl Context {
     }
 }
 
+fn translate_parser_type_to_cpp_type(pt: &parser::ast::Type) -> CppType {
+    match pt {
+        parser::ast::Type::Void => CppType::Void,
+        parser::ast::Type::Bool => CppType::Bool,
+        parser::ast::Type::Int8 => CppType::Char,
+        parser::ast::Type::Int16 => CppType::Short,
+        parser::ast::Type::Int32 => CppType::Int,
+        parser::ast::Type::Int64 => CppType::Long,
+        parser::ast::Type::Uint8 => CppType::UChar,
+        parser::ast::Type::Uint16 => CppType::UShort,
+        parser::ast::Type::Uint32 => CppType::UInt,
+        parser::ast::Type::Uint64 => CppType::ULong,
+        parser::ast::Type::Float32 => CppType::Float,
+        parser::ast::Type::Float64 => CppType::Double,
+        parser::ast::Type::Text => CppType::String,
+        parser::ast::Type::Data => panic!("Unsupported type 'Data'"),
+        parser::ast::Type::List(t) => CppType::Vector(Box::new(translate_parser_type_to_cpp_type(&*t))),
+        parser::ast::Type::Enum { type_id } => CppType::RefId(*type_id),
+        parser::ast::Type::Struct { type_id } => CppType::RefId(*type_id),
+        parser::ast::Type::Interface { .. } => panic!("Unsupported type 'Interface'"),
+        parser::ast::Type::AnyPointer => panic!("Unsupported type 'AnyPointer'")
+    }
+}
+
+fn translate_parser_field_to_cpp_field(f: &parser::ast::Field) -> Field {
+    match f.which() {
+        crate::parser::ast::field::Which::Group(_) => { panic!("Groups are not supported."); }
+        crate::parser::ast::field::Which::Slot(t) => {
+            return Field::new(Name::from(f.name()), translate_parser_type_to_cpp_type(t));
+        }
+    }
+}
+
+fn translate_parser_field_to_enumerant(f: &parser::ast::Field) -> Name {
+    match f.which() {
+        crate::parser::ast::field::Which::Group(_) => { panic!("Groups are not supported."); }
+        crate::parser::ast::field::Which::Slot(_) => {
+            return Name::from(f.name());
+        }
+    }
+}
+
+fn generate_refid_for_union_which(id: Id) -> Id {
+    id + 1
+}
+
+fn generate_union_like_class(id: Id, name: &Name, fields: &Vec<parser::ast::Field>) -> Class {
+
+    let which = EnumClass::new(
+        Name::from("Which"),
+        fields.iter().map(translate_parser_field_to_enumerant).collect()
+    );
+
+    let union = Union::new(
+        Name::from(""),
+        fields.iter().map(translate_parser_field_to_cpp_field).collect()
+    );
+
+    Class::new(
+        name.clone(),
+        vec!(ComplexTypeDef::EnumClass(which), ComplexTypeDef::Union(union)),
+        vec!(Field::new(Name::from("which"), CppType::RefId(generate_refid_for_union_which(id))))
+    )
+}
+
 fn generate_header_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, node: &parser::ast::Node, namespace: &mut Namespace)
 {
     use parser::ast::node::Which;
 
+    let name = ctx.names.get(&node.id()).expect(&format!("Unable to determine name for node with id: {}", node.id())).clone();
+
     match node.which() {
         Which::File => {},
-        Which::Struct { is_group, discriminant_count, discriminant_offset, fields } => {},
+        Which::Struct { discriminant_count, fields, .. } => {
+            if *discriminant_count as usize > 0 {
+
+                let mut class_fields = vec!();
+                for f in fields {
+                    if f.discriminant_value() == crate::parser::ast::field::NO_DISCRIMINANT {
+                        class_fields.push(translate_parser_field_to_cpp_field(f));
+                    }
+                }
+
+                class_fields.push(Field::new(
+                    Name::from(&String::from("which")),
+                    CppType::RefId(generate_refid_for_union_which(node.id()))
+                ));
+
+                let mut union_fields = vec!();
+                for f in fields {
+                    if f.discriminant_value() != crate::parser::ast::field::NO_DISCRIMINANT {
+                        union_fields.push(translate_parser_field_to_cpp_field(f));
+                    }
+                }
+
+                let union = ComplexTypeDef::Union(Union::new(Name::from(""), union_fields));
+
+                namespace.defs_mut().push(
+                    ComplexTypeDef::Class(Class::new(
+                        name.clone(),
+                        vec!(union),
+                        class_fields
+                    ))
+                );
+
+            } else {
+
+                namespace.defs_mut().push(
+                    ComplexTypeDef::Class(Class::new(
+                        name.clone(),
+                        vec!(),
+                        fields.iter().map(translate_parser_field_to_cpp_field).collect()
+                    ))
+                );
+            }
+        },
         Which::Enum(enumerants) => {
             namespace.defs_mut().push(
                 ComplexTypeDef::EnumClass(EnumClass::new(
@@ -159,7 +268,7 @@ fn generate_header_for_file_node(ctx: &Context, cgr: &CodeGeneratorRequest, node
         ));
 }
 
-fn generate_header_body(ctx: &Context, cgr: &CodeGeneratorRequest) -> Namespace {
+fn generate_base_ast(ctx: &Context, cgr: &CodeGeneratorRequest) -> Namespace {
     let mut root = Namespace::empty();
 
     cgr.nodes().iter()
@@ -180,12 +289,16 @@ fn generate_imports(cgr: &CodeGeneratorRequest) -> Vec<Import> {
     return imports;
 }
 
-fn generate_header(ctx: &Context, cgr: &CodeGeneratorRequest) -> FileDef {
+fn generate_header_body(ast: &Namespace) -> Namespace {
+    ast.clone()
+}
+
+fn generate_header(ctx: &Context, cgr: &CodeGeneratorRequest, ast: &Namespace) -> FileDef {
     FileDef::new(
         Name::from("lib"),
         String::from("hpp"),
         generate_imports(cgr),
-        generate_header_body(ctx, cgr)
+        generate_header_body(ast)
     )
 }
 
@@ -194,7 +307,9 @@ pub fn translate(ctx: &Context, cgr: &CodeGeneratorRequest) -> CppAst {
     ctx.set_annotation_ids_from(&cgr);
     ctx.set_names_from(&cgr);
 
+    let ast = generate_base_ast(&ctx, cgr);
+
     return CppAst::new(vec!(
-        generate_header(&ctx, cgr)
+        generate_header(&ctx, cgr, &ast)
     ));
 }

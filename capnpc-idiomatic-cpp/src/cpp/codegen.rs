@@ -35,34 +35,114 @@ fn codegen_enum_class(enum_class: &ast::EnumClass) -> String {
     )
 }
 
+fn codegen_cpp_type(t: &ast::CppType) -> String {
+    match t {
+        ast::CppType::Void => String::from("void"),
+        ast::CppType::Bool => String::from("bool"),
+        ast::CppType::Char => String::from("char"),
+        ast::CppType::Short => String::from("short"),
+        ast::CppType::Int => String::from("int"),
+        ast::CppType::Long => String::from("long"),
+        ast::CppType::UChar => String::from("unsigned char"),
+        ast::CppType::UShort => String::from("unsigned short"),
+        ast::CppType::UInt => String::from("unsigned int"),
+        ast::CppType::ULong => String::from("unsigned long"),
+        ast::CppType::Float => String::from("float"),
+        ast::CppType::Double => String::from("double"),
+        ast::CppType::String => String::from("std::string"),
+        ast::CppType::Vector(t) => format!("std::vector<{}>", codegen_cpp_type(&*t)),
+        ast::CppType::RefId(id) => format!("ref{}", id)
+    }
+}
+
+fn codegen_field(f: &ast::Field) -> String {
+    format!("{} {};", codegen_cpp_type(f.cpp_type()), f.name().to_lower_camel_case(&[]))
+}
+
+fn codegen_union(u: &ast::Union) -> String {
+    indoc!("
+        union #NAME {
+            #FIELDS
+        }
+    ")
+    .replace("#NAME", &u.name().to_upper_camel_case(&[]))
+    .replace(
+        "#FIELDS",
+        &u.fields()
+            .iter()
+            .map(codegen_field)
+            .collect::<Vec<String>>()
+            .join("\n    ")
+    )
+}
+
+fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
+    let mut class_defs: Vec<String> = vec!();
+    class_defs.push(
+        c.inner_types()
+            .iter()
+            .map(|t| codegen_complex_type_definition(ctx, t))
+            .collect::<Vec<String>>()
+            .join("\n")
+            .replace("\n", "\n    ")
+    );
+    class_defs.push(
+        c.fields()
+            .iter()
+            .map(codegen_field)
+            .collect::<Vec<String>>()
+            .join("\n    ")
+    );
+
+    let class_defs: Vec<String> = class_defs.iter()
+        .filter(|s| s.len() != 0)
+        .map(String::clone)
+        .collect();
+
+    indoc!("
+        class #NAME {
+            #CLASS_DEFS
+        }
+    ")
+    .replace("#NAME", &c.name().to_upper_camel_case(&[]))
+    .replace(
+        "#CLASS_DEFS",
+        &class_defs.join("\n    ")
+    )
+}
+
 fn codegen_complex_type_definition(ctx: &Context, def: &ast::ComplexTypeDef) -> String {
     match def {
+        ast::ComplexTypeDef::Class(c) => codegen_class(ctx, c),
         ast::ComplexTypeDef::EnumClass(e) => codegen_enum_class(e),
-        ast::ComplexTypeDef::Class(_) => String::new(),
+        ast::ComplexTypeDef::Union(u) => codegen_union(u),
     }
 }
 
 fn codegen_namespace_contents(ctx: &Context, namespace: &ast::Namespace) -> String {
-    indoc!(
-        "#NAMESPACES
-        
-        #TYPES"
-    )
-    .replace(
-        "#NAMESPACES",
-        &namespace.namespaces()
+    let mut namespace_defs : Vec<String> = vec!();
+    namespace_defs.push(
+        namespace.namespaces()
             .iter()
             .map(|(name,namespace)| codegen_namespace(ctx, name, namespace))
             .collect::<Vec<String>>()
-            .join("\n")
-    )
-    .replace(
-        "#TYPES",
-        &namespace.defs()
+            .join("\n\n")
+    );
+
+    namespace_defs.push(
+        namespace.defs()
             .iter()
             .map(|def| codegen_complex_type_definition(ctx, def))
             .collect::<Vec<String>>()
             .join("\n")
+    );
+
+    indoc!(
+        "#DEFINITIONS"
+    )
+    .replace(
+        "#DEFINITIONS",
+        &namespace_defs.join("\n")
     )
 }
 
@@ -70,7 +150,8 @@ fn codegen_namespace(ctx: &Context, name: &ast::Name, namespace: &ast::Namespace
     indoc!(
         "namespace #NAME {
         #CONTENTS
-        }"
+        } // namespace #NAME
+        "
     )
     .replace("#NAME", &name.to_string())
     .replace("#CONTENTS", &codegen_namespace_contents(ctx, namespace))

@@ -35,6 +35,10 @@ pub enum CppType {
     Short,
     Int,
     Long,
+    UChar,
+    UShort,
+    UInt,
+    ULong,
     Float,
     Double,
     String,
@@ -60,11 +64,20 @@ pub struct Field {
 #[get = "pub"]
 pub struct Class {
     name: Name,
+    inner_types: Vec<ComplexTypeDef>,
+    fields: Vec<Field>
+}
+
+#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[get = "pub"]
+pub struct Union {
+    name: Name,
     fields: Vec<Field>
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ComplexTypeDef {
+    Union(Union),
     EnumClass(EnumClass),
     Class(Class)
 }
