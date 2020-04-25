@@ -17,6 +17,9 @@ pub struct Context {
     #[getset(get_copy)]
     name_annotation_id: u64,
 
+    #[getset(get_copy)]
+    idiomatic_namespace_annotation_id: u64,
+
     #[getset(get, set)]
     namespace: FullyQualifiedName,
 
@@ -36,6 +39,7 @@ impl Context {
             out_dir: out_dir.clone(),
             namespace_annotation_id: 0,
             name_annotation_id: 0,
+            idiomatic_namespace_annotation_id: 0,
             namespace: FullyQualifiedName::empty(),
             names: HashMap::new(),
             children: MultiMap::new(),
@@ -49,26 +53,8 @@ impl Context {
         return ctx;
     }
 
-    fn set_annotation_ids_from(&mut self, cgr: &CodeGeneratorRequest) {
-        let annotation_node_option = cgr.nodes()
-            .iter()
-            .filter(|n| n.which() == &parser::ast::node::Which::File)
-            .filter(|n| n.annotations().len() == 1)
-            .filter(|n| {
-                let a = n.annotations().get(0).unwrap();
-                if let parser::ast::Value::Text(t) = a.value() {
-                    return t == &String::from("capnp::annotations");
-                }
-                return false
-            })
-            .last();
-
-        if let None = annotation_node_option {
-            return;
-        }
-
-        let annotation_node = annotation_node_option.unwrap();
-        annotation_node.nested_nodes()
+    fn set_annotation_ids_from_file(&mut self, file: &parser::ast::Node) {
+        file.nested_nodes()
             .iter()
             .for_each(|n| {
                 if n.name() == &"namespace" {
@@ -77,13 +63,26 @@ impl Context {
                 if n.name() == &"name" {
                     self.name_annotation_id = n.id()
                 }
+                if n.name() == &"idiomaticCppNamespace" {
+                    self.idiomatic_namespace_annotation_id = n.id()
+                }
             });
+    }
+
+    fn set_annotation_ids_from(&mut self, cgr: &CodeGeneratorRequest) {
+        cgr.nodes()
+            .iter()
+            .filter(|n| n.which() == &parser::ast::node::Which::File)
+            .for_each(|n| self.set_annotation_ids_from_file(n));
 
         if self.namespace_annotation_id == 0 {
             panic!("Unable to determine namespace annotation id from c++.capnp.");
         }
         if self.name_annotation_id == 0 {
             panic!("Unable to determine name annotation id from c++.capnp.");
+        }
+        if self.idiomatic_namespace_annotation_id == 0 {
+            panic!("Unable to determine namespace annotation id for idiomatic c++ classes.");
         }
     }
 
@@ -261,21 +260,25 @@ fn generate_base_ast_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, no
 }
 
 fn generate_base_ast_for_file_node(ctx: &Context, cgr: &CodeGeneratorRequest, node: &parser::ast::Node, root: &mut Namespace) {
-    let namespace_annotation = node.annotations()
+    let idiomatic_namespace_annotation_option = node.annotations()
         .iter()
-        .filter(|a| a.id() == ctx.namespace_annotation_id())
-        .last()
-        .expect("Missing namespace annotation for file.");
+        .filter(|a| a.id() == ctx.idiomatic_namespace_annotation_id())
+        .last();
 
-    let namespace_name =
-        if let parser::ast::Value::Text(t) = namespace_annotation.value() {
+    if let None = idiomatic_namespace_annotation_option {
+        println!("INFO: Skipping generation for file '{}'. Missing idiomatic namespace annotation.", node.display_name());
+        return;
+    }
+
+    let idiomatic_namespace_name =
+        if let parser::ast::Value::Text(t) = idiomatic_namespace_annotation_option.unwrap().value() {
             t
         } else {
             panic!(format!("Namespace annotation for {} was not a string.", node.display_name()));
         };
 
-    let namespace_path = FullyQualifiedName::new(namespace_name.split("::").map(Name::from).collect());
-    let namespace = root.get_or_create_namespace_mut(&namespace_path);
+    let idiomatic_namespace_path = FullyQualifiedName::new(idiomatic_namespace_name.split("::").map(Name::from).collect());
+    let namespace = root.get_or_create_namespace_mut(&idiomatic_namespace_path);
 
     cgr.nodes()
         .iter()
@@ -285,7 +288,7 @@ fn generate_base_ast_for_file_node(ctx: &Context, cgr: &CodeGeneratorRequest, no
             |child| 
             namespace.defs_mut().push(
                 generate_base_ast_type_for_node(
-                &ctx.with_namespace(&namespace_path),
+                &ctx.with_namespace(&idiomatic_namespace_path),
                 cgr,
                 child
             ))
