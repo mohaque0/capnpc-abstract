@@ -309,7 +309,7 @@ fn generate_imports(cgr: &CodeGeneratorRequest) -> Vec<Import> {
         .map(|filename| Import::new(filename))
         .collect();
     imports.push(Import::new(String::from("capnp/message.h")));
-    imports.push(Import::new(String::from("capnp/serialized-packed.h")));
+    imports.push(Import::new(String::from("capnp/serialize-packed.h")));
     return imports;
 }
 
