@@ -78,7 +78,7 @@ fn codegen_enum_class(enum_class: &ast::EnumClass) -> String {
     indoc!("
         enum class #NAME {
             #ENUMERANTS
-        }
+        };
     ")
     .replace("#NAME", &enum_class.name().to_upper_camel_case(&[]))
     .replace(
@@ -119,7 +119,7 @@ fn codegen_union(ctx: &Context, u: &ast::Union) -> String {
     indoc!("
         union #NAME {
             #FIELDS
-        }
+        };
     ")
     .replace("#NAME", &u.name().to_upper_camel_case(&[]))
     .replace(
@@ -158,7 +158,7 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
     indoc!("
         class #NAME {
             #CLASS_DEFS
-        }
+        };
     ")
     .replace("#NAME", &c.name().to_upper_camel_case(&[]))
     .replace(
