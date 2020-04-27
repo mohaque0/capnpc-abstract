@@ -79,7 +79,21 @@ pub struct Union {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum PrototypeKind {
+    EnumClass,
+    Class
+}
+
+#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[get = "pub"]
+pub struct Prototype {
+    kind: PrototypeKind,
+    name: Name
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum ComplexTypeDef {
+    Prototype(Prototype),
     Union(Union),
     EnumClass(EnumClass),
     Class(Class)
@@ -105,6 +119,7 @@ pub struct FileDef {
     name: Name,
     ext: String,
     imports: Vec<Import>,
+    prototypes: Namespace,
     namespace: Namespace
 }
 

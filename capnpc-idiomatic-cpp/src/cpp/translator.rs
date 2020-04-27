@@ -316,6 +316,32 @@ fn generate_imports(cgr: &CodeGeneratorRequest) -> Vec<Import> {
     return imports;
 }
 
+fn generate_prototype_for_complex_type_def(def: &ComplexTypeDef) -> ComplexTypeDef {
+    ComplexTypeDef::Prototype(
+        match def {
+            ComplexTypeDef::Prototype(p) => p.clone(),
+            ComplexTypeDef::Union(_) => panic!("Unsupported: prototyping union"),
+            ComplexTypeDef::EnumClass(e) => Prototype::new(PrototypeKind::EnumClass, e.name().clone()),
+            ComplexTypeDef::Class(c) => Prototype::new(PrototypeKind::Class, c.name().clone())
+        }
+    )
+}
+
+fn generate_prototypes_from_base(base: &Namespace) -> Namespace {
+    let mut prototypes = Namespace::empty();
+
+    for name in base.list_namespaces() {
+        let base_namespace = base.get_namespace(&name).unwrap();
+        let prototype_namespace = prototypes.get_or_create_namespace_mut(&name);
+
+        for def in base_namespace.defs() {
+            prototype_namespace.defs_mut().push(generate_prototype_for_complex_type_def(&def))
+        }
+    }
+
+    return prototypes;
+}
+
 fn generate_header_body(ast: &Namespace) -> Namespace {
     ast.clone()
 }
@@ -325,6 +351,7 @@ fn generate_header(ctx: &Context, cgr: &CodeGeneratorRequest, ast: &Namespace) -
         Name::from("lib"),
         String::from("hpp"),
         generate_imports(cgr),
+        generate_prototypes_from_base(ast),
         generate_header_body(ast)
     )
 }

@@ -35,6 +35,7 @@ impl Context {
 
     fn set_type_info_from_complex_type_def(&mut self, fqn: &ast::FullyQualifiedName, t: &ast::ComplexTypeDef) {
         match t {
+            ast::ComplexTypeDef::Prototype(_) => {}
             ast::ComplexTypeDef::EnumClass(e) => {
                 self.type_info.insert(*e.id(), TypeInfo::new(e.name().clone(), fqn.with_appended(&e.name())));
             },
@@ -43,7 +44,13 @@ impl Context {
                 c.inner_types().iter().for_each(|t| self.set_type_info_from_complex_type_def(&fqn.with_appended(c.name()), t))
             },
             ast::ComplexTypeDef::Union(u) => {
-                self.type_info.insert(*u.id(), TypeInfo::new(u.name().clone(), fqn.with_appended(&u.name())));
+                // For unions, the name might sometimes be empty. In that case the containing class is the name we want.
+                // So we might not append.
+                if u.name().to_string().len() == 0 {
+                    self.type_info.insert(*u.id(), TypeInfo::new(u.name().clone(), fqn.clone()));
+                } else {
+                    self.type_info.insert(*u.id(), TypeInfo::new(u.name().clone(), fqn.with_appended(&u.name())));
+                }
             },
         }
     }
@@ -132,6 +139,13 @@ fn codegen_union(ctx: &Context, u: &ast::Union) -> String {
     )
 }
 
+fn codegen_prototype(p: &ast::Prototype) -> String {
+    match p.kind() {
+        ast::PrototypeKind::EnumClass => format!("enum class {};", p.name().to_string()),
+        ast::PrototypeKind::Class => format!("class {};", p.name().to_string())
+    }
+}
+
 fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
     let mut class_defs: Vec<String> = vec!();
     class_defs.push(
@@ -169,6 +183,7 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
 
 fn codegen_complex_type_definition(ctx: &Context, def: &ast::ComplexTypeDef) -> String {
     match def {
+        ast::ComplexTypeDef::Prototype(p) => codegen_prototype(p),
         ast::ComplexTypeDef::Class(c) => codegen_class(ctx, c),
         ast::ComplexTypeDef::EnumClass(e) => codegen_enum_class(e),
         ast::ComplexTypeDef::Union(u) => codegen_union(ctx, u),
@@ -223,6 +238,8 @@ fn codegen_file(ctx: &Context, file_def: &ast::FileDef) -> (PathBuf, String) {
 
     let code = indoc!(
         "#IMPORTS
+
+        #PROTOTYPES
         
         #DEFINITIONS"
     )
@@ -233,6 +250,10 @@ fn codegen_file(ctx: &Context, file_def: &ast::FileDef) -> (PathBuf, String) {
                 .map(|it| codegen_import(ctx, it))
                 .collect::<Vec<String>>()
                 .join("\n")
+        )
+        .replace(
+            "#PROTOTYPES",
+            &codegen_namespace_contents(ctx, &file_def.prototypes())
         )
         .replace(
             "#DEFINITIONS",
