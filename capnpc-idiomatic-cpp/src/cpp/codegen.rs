@@ -126,7 +126,15 @@ fn codegen_cpp_type(ctx: &Context, t: &ast::CppType) -> String {
 }
 
 fn codegen_field(ctx: &Context, f: &ast::Field) -> String {
-    format!("{} {};", codegen_cpp_type(ctx, f.cpp_type()), f.name().to_lower_camel_case(&[]))
+    format!("{} _{};", codegen_cpp_type(ctx, f.cpp_type()), f.name().to_lower_camel_case(&[]))
+}
+
+fn codegen_field_getset_prototype(ctx: &Context, f: &ast::Field) -> String {
+    format!(
+        "const {}& {}() const;",
+        codegen_cpp_type(ctx, f.cpp_type()),
+        f.name().to_lower_camel_case(&[])
+    )
 }
 
 fn codegen_union(ctx: &Context, u: &ast::Union) -> String {
@@ -166,6 +174,15 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
             .join("\n    ")
     );
 
+    let mut class_field_getset: Vec<String> = vec!();
+    class_field_getset.push(
+        c.fields()
+            .iter()
+            .map(|f| codegen_field_getset_prototype(ctx, f))
+            .collect::<Vec<String>>()
+            .join("\n    ")
+    );
+
     let class_inner_types: Vec<String> = class_inner_types.into_iter()
         .filter(|s| s.len() != 0)
         .collect();
@@ -196,6 +213,18 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
             .replace(
                 "#CLASS_FIELDS",
                 &class_fields.join("\n    ")
+            )
+        )
+    }
+    if class_field_getset.len() > 0 {
+        class_sections.push(
+            indoc!("
+                public:
+                    #CLASS_METHODS
+            ")
+            .replace(
+                "#CLASS_METHODS",
+                &class_field_getset.join("\n    ")
             )
         )
     }
