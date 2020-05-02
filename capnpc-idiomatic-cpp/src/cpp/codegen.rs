@@ -33,9 +33,16 @@ impl Context {
         Context { out_dir: out_dir, type_info: HashMap::new(), current_namespace: ast::FullyQualifiedName::empty() }
     }
 
+    pub fn with_child_namespace(&self, name: &ast::Name) -> Context {
+        Context {
+            out_dir: self.out_dir.clone(),
+            type_info: self.type_info.clone(),
+            current_namespace: self.current_namespace.with_appended(name)
+        }
+    }
+
     fn set_type_info_from_complex_type_def(&mut self, fqn: &ast::FullyQualifiedName, t: &ast::ComplexTypeDef) {
         match t {
-            ast::ComplexTypeDef::Prototype(_) => {}
             ast::ComplexTypeDef::EnumClass(e) => {
                 self.type_info.insert(*e.id(), TypeInfo::new(e.name().clone(), fqn.with_appended(&e.name())));
             },
@@ -139,13 +146,6 @@ fn codegen_union(ctx: &Context, u: &ast::Union) -> String {
     )
 }
 
-fn codegen_prototype(p: &ast::Prototype) -> String {
-    match p.kind() {
-        ast::PrototypeKind::EnumClass => format!("enum class {};", p.name().to_string()),
-        ast::PrototypeKind::Class => format!("class {};", p.name().to_string())
-    }
-}
-
 fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
     let mut class_defs: Vec<String> = vec!();
     class_defs.push(
@@ -183,25 +183,203 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
 
 fn codegen_complex_type_definition(ctx: &Context, def: &ast::ComplexTypeDef) -> String {
     match def {
-        ast::ComplexTypeDef::Prototype(p) => codegen_prototype(p),
         ast::ComplexTypeDef::Class(c) => codegen_class(ctx, c),
         ast::ComplexTypeDef::EnumClass(e) => codegen_enum_class(e),
         ast::ComplexTypeDef::Union(u) => codegen_union(ctx, u),
     }
 }
 
+fn generate_all_types_used_by_cpp_type(ctx: &Context, cpp_type: &ast::CppType) -> Vec<ast::FullyQualifiedName> {
+    let mut deps = vec!();
+    if let ast::CppType::RefId(id) = cpp_type {
+        deps.push(ctx.type_info().get(&id).unwrap().fqn().clone())
+    }
+    if let ast::CppType::Vector(t) = cpp_type {
+        deps.extend(generate_all_types_used_by_cpp_type(ctx, &**t));
+    }
+    return deps;
+}
+
+fn generate_all_types_used_by_type(ctx: &Context, def: &ast::ComplexTypeDef) -> Vec<ast::FullyQualifiedName> {
+    let id = def.id();
+    let def_info = ctx.type_info().get(&id).unwrap();
+
+    let mut deps = vec!();
+    match def {
+        ast::ComplexTypeDef::Class(c) => {
+            for field in c.fields() {
+                deps.extend(generate_all_types_used_by_cpp_type(ctx, field.cpp_type()))
+            }
+            for inner_type in c.inner_types() {
+                deps.extend(generate_all_types_used_by_type(ctx, inner_type).into_iter());
+            }
+        },
+        ast::ComplexTypeDef::EnumClass(c) => {},
+        ast::ComplexTypeDef::Union(u) => {
+            for field in u.fields() {
+                if let ast::CppType::RefId(id) = field.cpp_type() {
+                    deps.push(ctx.type_info().get(&id).unwrap().fqn().clone())
+                }
+            }
+        },
+    }
+
+    deps.push(def_info.fqn().clone());
+
+    return deps;
+}
+
+fn generate_dependency_list_for_type(ctx: &Context, def: &ast::ComplexTypeDef, namespace: &ast::Namespace) -> Vec<ast::Name> {
+    let id = def.id();
+    let def_info = ctx.type_info().get(&id).unwrap();
+    let def_path = def_info.fqn().parent();
+
+    println!("  td {} => {:?}",
+        def_info.fqn().to_string(),
+        generate_all_types_used_by_type(ctx, def)
+            .iter()
+            .map(|fqn| fqn.to_string())
+            .collect::<Vec<String>>()
+    );
+
+    return generate_all_types_used_by_type(ctx, def)
+        .iter()
+        .filter(|fqn| fqn.is_prefixed_by(&def_path))
+        .filter(|fqn| fqn.names().len() == def_info.fqn().names().len())
+        .map(|fqn| fqn.names().last().unwrap().clone())
+        .collect()
+}
+
+fn generate_all_type_dependencies_recursive(
+    ctx: &Context,
+    namespace: &ast::Namespace
+) -> Vec<ast::FullyQualifiedName> {
+    let mut deps = vec!();
+    for (_, child_namespace) in namespace.namespaces() {
+        deps.extend(generate_all_type_dependencies_recursive(ctx, child_namespace));
+    }
+
+    for def in namespace.defs() {
+        deps.extend(generate_all_types_used_by_type(ctx, def))
+    }
+
+    return deps;
+}
+
+fn generate_dependency_list_for_namespaces(
+    ctx: &Context,
+    fqn: &ast::FullyQualifiedName,
+    namespace: &ast::Namespace
+) -> Vec<ast::Name> {
+
+    let mut deps = vec!();
+    let all_type_dependencies = generate_all_type_dependencies_recursive(ctx, namespace);
+    for type_dependency in all_type_dependencies {
+        if
+            type_dependency.names().len() >= fqn.names().len() &&
+            fqn.names().len() > 0
+        {
+            let depname = type_dependency.names().get(fqn.names().len()).unwrap().clone();
+            if !deps.contains(&depname) {
+                deps.push(depname)
+            }
+        }
+    }
+
+    return deps;
+}
+
+fn insert_names_sorted_by_dependencies<'a>(
+    dst: &mut Vec<&'a ast::Name>,
+    name: &'a ast::Name,
+    deps: &'a HashMap<&'a ast::Name, Vec<ast::Name>>,
+    queue: Vec<&'a ast::Name>
+) {
+    println!("    -> Call: {} dst.len={} deps.len={} q.len={}", name.to_string(), dst.len(), deps.len(), queue.len());
+
+    if dst.contains(&name) {
+        println!("    -> In dst {}", name.to_string());
+        return;
+    }
+
+    if queue.contains(&name) {
+        println!("    -> In queue {}", name.to_string());
+        return;
+    }
+
+    match deps.get(name) {
+        Some(dep_list) =>
+            for dep in dep_list {
+                let mut new_queue = queue.clone();
+                new_queue.push(name);
+                insert_names_sorted_by_dependencies(dst, dep, deps, new_queue)
+            },
+        None => ()
+    }
+
+    println!("    -> ins {}", name.to_string());
+    dst.push(name);
+}
+
 fn codegen_namespace_contents(ctx: &Context, namespace: &ast::Namespace) -> String {
+    println!("Current Namespace: {}", ctx.current_namespace().to_string());
+
+    //
+    // TODO: In the future, it would be better to identify all types that must be generated,
+    //       sort those by dependency, group the sorted list by namespace and then generate.
+    //
+
+    // Sort namespaces so that every type is fully defined when it's needed.
+    let mut namespace_dependencies : HashMap<&ast::Name, Vec<ast::Name>> = HashMap::new();
+    for (name, child_namespace) in namespace.namespaces() {
+        namespace_dependencies.insert(name, generate_dependency_list_for_namespaces(ctx, ctx.current_namespace(), &child_namespace));
+    }
+
+    for (n, d) in &namespace_dependencies {
+        println!("  nd: {} => {:?}", n.to_string(), d.iter().map(ast::Name::to_string).collect::<Vec<String>>());
+    }
+
+    let mut sorted_child_namespaces = vec!();
+    for (name, _) in namespace.namespaces() {
+        insert_names_sorted_by_dependencies(&mut sorted_child_namespaces, name, &namespace_dependencies, vec!());
+    }
+
+    println!("  Namespace Order: {:?}", sorted_child_namespaces.iter().map(|it| it.to_string()).collect::<Vec<String>>());
+
     let mut namespace_defs : Vec<String> = vec!();
     namespace_defs.push(
-        namespace.namespaces()
+        sorted_child_namespaces
             .iter()
-            .map(|(name,namespace)| codegen_namespace(ctx, name, namespace))
+            .map(|name| codegen_namespace(ctx, name, namespace.get_namespace(&ast::FullyQualifiedName::empty().with_appended(name)).unwrap()))
             .collect::<Vec<String>>()
             .join("\n\n")
     );
 
+    // Sort types so that every type is fully defined when it's needed.
+    let mut type_dependencies : HashMap<&ast::Name, Vec<ast::Name>> = HashMap::new();
+    for def in namespace.defs() {
+        type_dependencies.insert(def.name(), generate_dependency_list_for_type(ctx, def, namespace));
+    }
+
+    let mut sorted_type_dependencies = vec!();
+    for def in namespace.defs() {
+        insert_names_sorted_by_dependencies(&mut sorted_type_dependencies, def.name(), &type_dependencies, vec!())
+    }
+
+    let mut sorted_types = vec!();
+    for name in sorted_type_dependencies {
+        for def in namespace.defs() {
+            if def.name() == name {
+                sorted_types.push(def);
+            }
+        }
+    }
+
+    //println!("Type Order: {:?}", sorted_types.iter().map(|it| it.name().to_string()).collect::<Vec<String>>());
+    //println!("Orig Order: {:?}", namespace.defs().iter().map(|it| it.name().to_string()).collect::<Vec<String>>());
+
     namespace_defs.push(
-        namespace.defs()
+        sorted_types
             .iter()
             .map(|def| codegen_complex_type_definition(ctx, def))
             .collect::<Vec<String>>()
@@ -225,7 +403,7 @@ fn codegen_namespace(ctx: &Context, name: &ast::Name, namespace: &ast::Namespace
         "
     )
     .replace("#NAME", &name.to_string())
-    .replace("#CONTENTS", &codegen_namespace_contents(ctx, namespace))
+    .replace("#CONTENTS", &codegen_namespace_contents(&ctx.with_child_namespace(name), namespace))
 }
 
 fn codegen_import(ctx: &Context, import: &ast::Import) -> String {

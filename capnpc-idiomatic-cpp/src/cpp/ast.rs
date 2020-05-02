@@ -27,7 +27,7 @@ pub struct FullyQualifiedName {
 
 pub type Id = u64;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CppType {
     Void,
     Bool,
@@ -46,7 +46,7 @@ pub enum CppType {
     RefId(Id)
 }
 
-#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq, Eq)]
 #[get = "pub"]
 pub struct EnumClass {
     id: Id,
@@ -54,14 +54,14 @@ pub struct EnumClass {
     enumerants: Vec<Name>
 }
 
-#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq, Eq)]
 #[get = "pub"]
 pub struct Field {
     name: Name,
     cpp_type: CppType
 }
 
-#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq, Eq)]
 #[get = "pub"]
 pub struct Class {
     id: Id,
@@ -70,7 +70,7 @@ pub struct Class {
     fields: Vec<Field>
 }
 
-#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
+#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq, Eq)]
 #[get = "pub"]
 pub struct Union {
     id: Id,
@@ -91,9 +91,8 @@ pub struct Prototype {
     name: Name
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ComplexTypeDef {
-    Prototype(Prototype),
     Union(Union),
     EnumClass(EnumClass),
     Class(Class)
@@ -273,6 +272,34 @@ impl FullyQualifiedName {
             names: tail_names
         }
     }
+
+    pub fn parent(&self) -> FullyQualifiedName {
+        match self.names.split_last() {
+            Some((last,names)) =>
+                FullyQualifiedName {
+                    names: names.to_vec()
+                },
+            None => FullyQualifiedName::empty()
+        }
+    }
+
+    pub fn last(&self) -> Option<&Name> {
+        self.names.last()
+    }
+
+    pub fn is_prefixed_by(&self, prefix: &FullyQualifiedName) -> bool {
+        if self.names.len() < prefix.names.len() {
+            return false;
+        }
+
+        for idx in 0..prefix.names.len() {
+            if self.names.get(idx) != prefix.names.get(idx) {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }
 
 impl From<Vec<&str>> for FullyQualifiedName {
@@ -360,6 +387,24 @@ impl Namespace {
     }
 }
 
+impl ComplexTypeDef {
+    pub fn id(&self) -> Id {
+        match self {
+            ComplexTypeDef::EnumClass(e) => *e.id(),
+            ComplexTypeDef::Class(c) => *c.id(),
+            ComplexTypeDef::Union(u) => *u.id()
+        }
+    }
+
+    pub fn name(&self) -> &Name {
+        match self {
+            ComplexTypeDef::EnumClass(e) => e.name(),
+            ComplexTypeDef::Class(c) => c.name(),
+            ComplexTypeDef::Union(u) => u.name()
+        }
+    }
+}
+
 impl FileDef {
     pub fn get_namespace(&self, name: &FullyQualifiedName) -> Option<&Namespace> {
         self.namespace.get_namespace(name)
@@ -397,5 +442,18 @@ mod tests {
         n.get_or_create_namespace_mut(&FullyQualifiedName::from("Test::B".split("::").collect::<Vec<&str>>()));
 
         assert_eq!(n.list_namespaces().len(), 3);
+    }
+
+    #[test]
+    fn test_fqn_prefix() {
+        let root = FullyQualifiedName::empty();
+        let a = &FullyQualifiedName::from("Test::A".split("::").collect::<Vec<&str>>());
+        let b = &FullyQualifiedName::from("Test::A::B".split("::").collect::<Vec<&str>>());
+
+        assert_eq!(a.is_prefixed_by(&root), true);
+        assert_eq!(b.is_prefixed_by(&root), true);
+        assert_eq!(b.is_prefixed_by(&a), true);
+
+        assert_eq!(a.is_prefixed_by(&b), false);
     }
 }
