@@ -326,7 +326,6 @@ fn generate_header(ctx: &Context, cgr: &CodeGeneratorRequest, ast: &Namespace) -
         Name::from("lib"),
         String::from("hpp"),
         generate_imports(cgr),
-        Namespace::empty(),
         generate_header_body(ast)
     )
 }

@@ -416,8 +416,6 @@ fn codegen_file(ctx: &Context, file_def: &ast::FileDef) -> (PathBuf, String) {
 
     let code = indoc!(
         "#IMPORTS
-
-        #PROTOTYPES
         
         #DEFINITIONS"
     )
@@ -428,10 +426,6 @@ fn codegen_file(ctx: &Context, file_def: &ast::FileDef) -> (PathBuf, String) {
                 .map(|it| codegen_import(ctx, it))
                 .collect::<Vec<String>>()
                 .join("\n")
-        )
-        .replace(
-            "#PROTOTYPES",
-            &codegen_namespace_contents(ctx, &file_def.prototypes())
         )
         .replace(
             "#DEFINITIONS",
