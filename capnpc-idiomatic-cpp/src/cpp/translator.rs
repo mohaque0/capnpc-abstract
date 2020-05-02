@@ -313,6 +313,7 @@ fn generate_imports(cgr: &CodeGeneratorRequest) -> Vec<Import> {
         .collect();
     imports.push(Import::new(String::from("capnp/message.h")));
     imports.push(Import::new(String::from("capnp/serialize-packed.h")));
+    imports.push(Import::new(String::from("vector")));
     return imports;
 }
 
