@@ -147,8 +147,8 @@ fn codegen_union(ctx: &Context, u: &ast::Union) -> String {
 }
 
 fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
-    let mut class_defs: Vec<String> = vec!();
-    class_defs.push(
+    let mut class_inner_types: Vec<String> = vec!();
+    class_inner_types.push(
         c.inner_types()
             .iter()
             .map(|t| codegen_complex_type_definition(ctx, t))
@@ -156,7 +156,9 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
             .join("\n")
             .replace("\n", "\n    ")
     );
-    class_defs.push(
+
+    let mut class_fields: Vec<String> = vec!();
+    class_fields.push(
         c.fields()
             .iter()
             .map(|f| codegen_field(ctx, f))
@@ -164,20 +166,49 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
             .join("\n    ")
     );
 
-    let class_defs: Vec<String> = class_defs.iter()
+    let class_inner_types: Vec<String> = class_inner_types.into_iter()
         .filter(|s| s.len() != 0)
-        .map(String::clone)
         .collect();
+
+    let class_fields: Vec<String> = class_fields.into_iter()
+        .filter(|s| s.len() != 0)
+        .collect();
+
+    let mut class_sections: Vec<String> = vec!();
+    if class_inner_types.len() > 0 {
+        class_sections.push(
+            indoc!("
+                public:
+                    #CLASS_INNER_TYPES
+            ")
+            .replace(
+                "#CLASS_INNER_TYPES",
+                &class_inner_types.join("\n    ")
+            )
+        )
+    }
+    if class_fields.len() > 0 {
+        class_sections.push(
+            indoc!("
+                private:
+                    #CLASS_FIELDS
+            ")
+            .replace(
+                "#CLASS_FIELDS",
+                &class_fields.join("\n    ")
+            )
+        )
+    }
 
     indoc!("
         class #NAME {
-            #CLASS_DEFS
+        #SECTIONS
         };
     ")
     .replace("#NAME", &c.name().to_upper_camel_case(&[]))
     .replace(
-        "#CLASS_DEFS",
-        &class_defs.join("\n    ")
+        "#SECTIONS",
+        &class_sections.join("\n")
     )
 }
 
