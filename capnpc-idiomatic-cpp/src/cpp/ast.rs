@@ -67,20 +67,19 @@ pub struct Class {
     id: Id,
     name: Name,
     inner_types: Vec<ComplexTypeDef>,
+    union: Option<UnnamedUnion>,
     fields: Vec<Field>
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq, Eq)]
 #[get = "pub"]
-pub struct Union {
+pub struct UnnamedUnion {
     id: Id,
-    name: Name,
     fields: Vec<Field>
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ComplexTypeDef {
-    Union(Union),
     EnumClass(EnumClass),
     Class(Class)
 }
@@ -377,16 +376,14 @@ impl ComplexTypeDef {
     pub fn id(&self) -> Id {
         match self {
             ComplexTypeDef::EnumClass(e) => *e.id(),
-            ComplexTypeDef::Class(c) => *c.id(),
-            ComplexTypeDef::Union(u) => *u.id()
+            ComplexTypeDef::Class(c) => *c.id()
         }
     }
 
     pub fn name(&self) -> &Name {
         match self {
             ComplexTypeDef::EnumClass(e) => e.name(),
-            ComplexTypeDef::Class(c) => c.name(),
-            ComplexTypeDef::Union(u) => u.name()
+            ComplexTypeDef::Class(c) => c.name()
         }
     }
 }

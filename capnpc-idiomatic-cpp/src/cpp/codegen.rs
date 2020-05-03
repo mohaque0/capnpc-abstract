@@ -50,6 +50,7 @@ impl Context {
                 self.type_info.insert(*c.id(), TypeInfo::new(c.name().clone(), fqn.with_appended(&c.name())));
                 c.inner_types().iter().for_each(|t| self.set_type_info_from_complex_type_def(&fqn.with_appended(c.name()), t))
             },
+            /*
             ast::ComplexTypeDef::Union(u) => {
                 // For unions, the name might sometimes be empty. In that case the containing class is the name we want.
                 // So we might not append.
@@ -59,6 +60,7 @@ impl Context {
                     self.type_info.insert(*u.id(), TypeInfo::new(u.name().clone(), fqn.with_appended(&u.name())));
                 }
             },
+            */
         }
     }
 
@@ -129,32 +131,71 @@ fn codegen_field(ctx: &Context, f: &ast::Field) -> String {
     format!("{} _{};", codegen_cpp_type(ctx, f.cpp_type()), f.name().to_lower_camel_case(&[]))
 }
 
-fn codegen_field_getset_prototype(ctx: &Context, f: &ast::Field) -> String {
-    format!(
-        "const {}& {}() const;",
-        codegen_cpp_type(ctx, f.cpp_type()),
-        f.name().to_lower_camel_case(&[])
-    )
+fn codegen_field_getter_prototype(ctx: &Context, f: &ast::Field) -> String {
+    indoc!("const #TYPE& #GETTER() const;")
+    .replace("#TYPE", &codegen_cpp_type(ctx, f.cpp_type()))
+    .replace("#GETTER", &f.name().to_lower_camel_case(&[]))
 }
 
-fn codegen_union(ctx: &Context, u: &ast::Union) -> String {
+fn codegen_field_setter_prototype(ctx: &Context, class_name: &ast::Name, f: &ast::Field) -> String {
+    indoc!("#CLASS& #SETTER(#TYPE& val);")
+    .replace("#TYPE", &codegen_cpp_type(ctx, f.cpp_type()))
+    .replace("#CLASS", &class_name.to_string())
+    .replace("#SETTER", &f.name().with_prepended("set").to_lower_camel_case(&[]))
+}
+
+fn codegen_union_getter_prototypes(ctx: &Context, u_option: &Option<ast::UnnamedUnion>) -> Vec<String> {
+    match u_option {
+        Some(u) => {
+            u.fields()
+                .iter()
+                .map(|f| {
+                    indoc!("const #TYPE& #GETTER() const;")
+                    .replace("#TYPE", &codegen_cpp_type(ctx, f.cpp_type()))
+                    .replace("#GETTER", &f.name().with_prepended("as").to_lower_camel_case(&[]))
+                })
+                .collect()
+        }
+        None => vec!()
+    }
+}
+
+fn codegen_union_setter_prototypes(ctx: &Context, class_name: &ast::Name, u_option: &Option<ast::UnnamedUnion>) -> Vec<String> {
+    match u_option {
+        Some(u) => {
+            u.fields()
+                .iter()
+                .map(|f| {
+                    indoc!("#CLASS& #SETTER(#TYPE&& val) const;")
+                    .replace("#CLASS", &class_name.to_string())
+                    .replace("#TYPE", &codegen_cpp_type(ctx, f.cpp_type()))
+                    .replace("#SETTER", &f.name().with_prepended("as").with_prepended("set").to_lower_camel_case(&[]))
+                })
+                .collect()
+        }
+        None => vec!()
+    }
+}
+
+fn codegen_union_field(ctx: &Context, u: &ast::UnnamedUnion) -> String {
     indoc!("
-        union #NAME {
-            #FIELDS
-        };
+        private:
+            std::variant<
+                #TYPES
+            > _whichData;
     ")
-    .replace("#NAME", &u.name().to_upper_camel_case(&[]))
     .replace(
-        "#FIELDS",
+        "#TYPES",
         &u.fields()
             .iter()
-            .map(|f| codegen_field(ctx, f))
+            .map(|f| codegen_cpp_type(ctx, f.cpp_type()))
             .collect::<Vec<String>>()
-            .join("\n    ")
+            .join(",\n        ")
     )
 }
 
 fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
+    // Inner Types
     let mut class_inner_types: Vec<String> = vec!();
     class_inner_types.push(
         c.inner_types()
@@ -165,6 +206,11 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
             .replace("\n", "\n    ")
     );
 
+    let class_inner_types: Vec<String> = class_inner_types.into_iter()
+        .filter(|s| s.len() != 0)
+        .collect();
+
+    // Fields
     let mut class_fields: Vec<String> = vec!();
     class_fields.push(
         c.fields()
@@ -174,23 +220,37 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
             .join("\n    ")
     );
 
-    let mut class_field_getset: Vec<String> = vec!();
-    class_field_getset.push(
-        c.fields()
-            .iter()
-            .map(|f| codegen_field_getset_prototype(ctx, f))
-            .collect::<Vec<String>>()
-            .join("\n    ")
-    );
-
-    let class_inner_types: Vec<String> = class_inner_types.into_iter()
-        .filter(|s| s.len() != 0)
-        .collect();
-
     let class_fields: Vec<String> = class_fields.into_iter()
         .filter(|s| s.len() != 0)
         .collect();
 
+    // Methods
+    let mut class_methods: Vec<String> = vec!();
+    class_methods.extend(
+        c.fields()
+            .iter()
+            .map(|f| codegen_field_getter_prototype(ctx, f))
+    );
+    class_methods.extend(
+        c.fields()
+            .iter()
+            .filter(|it| {
+                // We don't want a setter for this. This is set implicitly when the variant is set.
+                match c.union() {
+                    Some(_) => it.name().to_lower_camel_case(&[]) != "which",
+                    None => true
+                }
+            })
+            .map(|f| codegen_field_setter_prototype(ctx, c.name(), f))
+    );
+    class_methods.extend(
+        codegen_union_getter_prototypes(ctx, c.union())
+    );
+    class_methods.extend(
+        codegen_union_setter_prototypes(ctx, c.name(), c.union())
+    );
+
+    // Add to sections
     let mut class_sections: Vec<String> = vec!();
     if class_inner_types.len() > 0 {
         class_sections.push(
@@ -216,7 +276,10 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
             )
         )
     }
-    if class_field_getset.len() > 0 {
+    if let Some(u) = c.union() {
+        class_sections.push(codegen_union_field(ctx, u));
+    }
+    if class_methods.len() > 0 {
         class_sections.push(
             indoc!("
                 public:
@@ -224,7 +287,7 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
             ")
             .replace(
                 "#CLASS_METHODS",
-                &class_field_getset.join("\n    ")
+                &class_methods.join("\n    ")
             )
         )
     }
@@ -244,8 +307,7 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
 fn codegen_complex_type_definition(ctx: &Context, def: &ast::ComplexTypeDef) -> String {
     match def {
         ast::ComplexTypeDef::Class(c) => codegen_class(ctx, c),
-        ast::ComplexTypeDef::EnumClass(e) => codegen_enum_class(e),
-        ast::ComplexTypeDef::Union(u) => codegen_union(ctx, u),
+        ast::ComplexTypeDef::EnumClass(e) => codegen_enum_class(e)
     }
 }
 
@@ -273,15 +335,15 @@ fn generate_all_types_used_by_type(ctx: &Context, def: &ast::ComplexTypeDef) -> 
             for inner_type in c.inner_types() {
                 deps.extend(generate_all_types_used_by_type(ctx, inner_type).into_iter());
             }
-        },
-        ast::ComplexTypeDef::EnumClass(c) => {},
-        ast::ComplexTypeDef::Union(u) => {
-            for field in u.fields() {
-                if let ast::CppType::RefId(id) = field.cpp_type() {
-                    deps.push(ctx.type_info().get(&id).unwrap().fqn().clone())
+            if let Some(u) = c.union() {
+                for field in u.fields() {
+                    if let ast::CppType::RefId(id) = field.cpp_type() {
+                        deps.push(ctx.type_info().get(&id).unwrap().fqn().clone())
+                    }
                 }
             }
         },
+        ast::ComplexTypeDef::EnumClass(c) => {}
     }
 
     deps.push(def_info.fqn().clone());

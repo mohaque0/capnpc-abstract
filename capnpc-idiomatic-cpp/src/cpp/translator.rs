@@ -151,7 +151,7 @@ fn translate_parser_field_to_enumerant(f: &parser::ast::Field) -> Name {
 fn generate_refid_for_union_which(id: Id) -> Id {
     id + 1
 }
-
+/*
 fn generate_refid_for_union_data(id: Id) -> Id {
     id + 2
 }
@@ -177,6 +177,7 @@ fn generate_union_like_class(id: Id, name: &Name, fields: &Vec<parser::ast::Fiel
         vec!(Field::new(Name::from("which"), CppType::RefId(generate_refid_for_union_which(id))))
     )
 }
+*/
 
 fn generate_base_ast_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, node: &parser::ast::Node) -> ComplexTypeDef
 {
@@ -217,9 +218,7 @@ fn generate_base_ast_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, no
                     }
                 }
 
-                let union = ComplexTypeDef::Union(Union::new(node.id(), Name::from(""), union_fields));
-                inner_types.push(union);
-
+                let union = UnnamedUnion::new(node.id(), union_fields);
                 let which = EnumClass::new(
                     generate_refid_for_union_which(node.id()),
                     Name::from("Which"),
@@ -231,6 +230,7 @@ fn generate_base_ast_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, no
                     node.id(),
                     name.clone(),
                     inner_types,
+                    Some(union),
                     class_fields
                 ));
 
@@ -239,6 +239,7 @@ fn generate_base_ast_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, no
                     node.id(),
                     name.clone(),
                     inner_types,
+                    None,
                     fields.iter().map(translate_parser_field_to_cpp_field).collect()
                 ));
             }
@@ -313,6 +314,7 @@ fn generate_imports(cgr: &CodeGeneratorRequest) -> Vec<Import> {
         .collect();
     imports.push(Import::new(String::from("capnp/message.h")));
     imports.push(Import::new(String::from("capnp/serialize-packed.h")));
+    imports.push(Import::new(String::from("variant")));
     imports.push(Import::new(String::from("vector")));
     return imports;
 }
