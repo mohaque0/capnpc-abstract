@@ -194,6 +194,43 @@ fn codegen_union_field(ctx: &Context, u: &ast::UnnamedUnion) -> String {
     )
 }
 
+fn codegen_constructor_prototype_fields(ctx: &Context, class_name: &ast::Name, fields: &Vec<ast::Field>) -> String {
+    indoc!("
+        #NAME(
+            #FIELDS
+        );"
+    )
+    .replace("#NAME", &class_name.to_string())
+    .replace(
+        "#FIELDS",
+        &fields.iter()
+            .map(|f| format!("{}&& {}", codegen_cpp_type(ctx, f.cpp_type()), f.name().to_string()).to_string())
+            .collect::<Vec<String>>()
+            .join(",\n    ")
+    )
+}
+
+fn codegen_constructor_prototypes(ctx: &Context, c: &ast::Class) -> Vec<String> {
+    let mut ret = vec!();
+
+    match c.union() {
+        Some(u) => {
+            for field in u.fields() {
+                let mut fields = c.fields().clone();
+                fields.push(field.clone());
+                ret.push(codegen_constructor_prototype_fields(ctx, c.name(), &fields))
+            }
+        }
+        None => {
+            ret.push(codegen_constructor_prototype_fields(ctx, c.name(), c.fields()))
+        }
+    };
+
+    ret.push(format!("#NAME(#NAME&& other);").replace("#NAME", &c.name().to_string()));
+    ret.push(format!("~{}();", c.name().to_string()));
+    return ret;
+}
+
 fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
     // Inner Types
     let mut class_inner_types: Vec<String> = vec!();
@@ -226,6 +263,9 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
 
     // Methods
     let mut class_methods: Vec<String> = vec!();
+    class_methods.extend(
+        codegen_constructor_prototypes(ctx, c)
+    );
     class_methods.extend(
         c.fields()
             .iter()
@@ -287,7 +327,7 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
             ")
             .replace(
                 "#CLASS_METHODS",
-                &class_methods.join("\n    ")
+                &class_methods.join("\n").replace("\n", "\n    ")
             )
         )
     }
