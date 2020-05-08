@@ -18,26 +18,6 @@ fn codegen_enum_class(enum_class: &ast::EnumClass) -> String {
     )
 }
 
-fn codegen_cpp_type(ctx: &Context, t: &ast::CppType) -> String {
-    match t {
-        ast::CppType::Void => String::from("void"),
-        ast::CppType::Bool => String::from("bool"),
-        ast::CppType::Char => String::from("char"),
-        ast::CppType::Short => String::from("short"),
-        ast::CppType::Int => String::from("int"),
-        ast::CppType::Long => String::from("long"),
-        ast::CppType::UChar => String::from("unsigned char"),
-        ast::CppType::UShort => String::from("unsigned short"),
-        ast::CppType::UInt => String::from("unsigned int"),
-        ast::CppType::ULong => String::from("unsigned long"),
-        ast::CppType::Float => String::from("float"),
-        ast::CppType::Double => String::from("double"),
-        ast::CppType::String => String::from("std::string"),
-        ast::CppType::Vector(t) => format!("std::vector<{}>", codegen_cpp_type(ctx, &*t)),
-        ast::CppType::RefId(id) => format!("{}", ctx.resolve_full_name(*id).to_string())
-    }
-}
-
 fn codegen_field(ctx: &Context, f: &ast::Field) -> String {
     format!("{} _{};", codegen_cpp_type(ctx, f.cpp_type()), f.name().to_lower_camel_case(&[]))
 }
