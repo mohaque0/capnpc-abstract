@@ -1,9 +1,7 @@
 use crate::getset::{Getters, CopyGetters, MutGetters, Setters};
 use std::collections::HashMap;
-use multimap::MultiMap;
-use indoc::indoc;
 
-
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NameCase {
     SnakeCase,
@@ -227,7 +225,7 @@ impl ToString for Name {
     }
 }
 
-
+#[allow(dead_code)]
 impl FullyQualifiedName {
     pub fn empty() -> Self {
         FullyQualifiedName { names: vec!() }
@@ -260,7 +258,7 @@ impl FullyQualifiedName {
 
     pub fn parent(&self) -> FullyQualifiedName {
         match self.names.split_last() {
-            Some((last,names)) =>
+            Some((_last,names)) =>
                 FullyQualifiedName {
                     names: names.to_vec()
                 },
@@ -299,6 +297,7 @@ impl ToString for FullyQualifiedName {
     }
 }
 
+#[allow(dead_code)]
 impl Namespace {
     pub fn empty() -> Namespace {
         Namespace { defs: vec!(), namespaces: HashMap::new() }
@@ -388,6 +387,7 @@ impl ComplexTypeDef {
     }
 }
 
+#[allow(dead_code)]
 impl FileDef {
     pub fn get_namespace(&self, name: &FullyQualifiedName) -> Option<&Namespace> {
         self.namespace.get_namespace(name)

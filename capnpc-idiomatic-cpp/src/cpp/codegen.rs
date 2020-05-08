@@ -1,7 +1,6 @@
 use crate::getset::{Getters, CopyGetters, MutGetters, Setters};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use multimap::MultiMap;
 use indoc::indoc;
 
 use crate::cpp::ast;
@@ -13,7 +12,7 @@ struct TypeInfo {
     fqn: ast::FullyQualifiedName
 }
 
-#[derive(Clone, CopyGetters, Getters, Setters)]
+#[derive(Clone, CopyGetters, MutGetters, Getters, Setters)]
 #[getset(get, get_mut)]
 pub struct Context {
     out_dir: PathBuf,
@@ -49,18 +48,7 @@ impl Context {
             ast::ComplexTypeDef::Class(c) => {
                 self.type_info.insert(*c.id(), TypeInfo::new(c.name().clone(), fqn.with_appended(&c.name())));
                 c.inner_types().iter().for_each(|t| self.set_type_info_from_complex_type_def(&fqn.with_appended(c.name()), t))
-            },
-            /*
-            ast::ComplexTypeDef::Union(u) => {
-                // For unions, the name might sometimes be empty. In that case the containing class is the name we want.
-                // So we might not append.
-                if u.name().to_string().len() == 0 {
-                    self.type_info.insert(*u.id(), TypeInfo::new(u.name().clone(), fqn.clone()));
-                } else {
-                    self.type_info.insert(*u.id(), TypeInfo::new(u.name().clone(), fqn.with_appended(&u.name())));
-                }
-            },
-            */
+            }
         }
     }
 
@@ -383,7 +371,7 @@ fn generate_all_types_used_by_type(ctx: &Context, def: &ast::ComplexTypeDef) -> 
                 }
             }
         },
-        ast::ComplexTypeDef::EnumClass(c) => {}
+        ast::ComplexTypeDef::EnumClass(_) => {}
     }
 
     deps.push(def_info.fqn().clone());
@@ -391,7 +379,7 @@ fn generate_all_types_used_by_type(ctx: &Context, def: &ast::ComplexTypeDef) -> 
     return deps;
 }
 
-fn generate_dependency_list_for_type(ctx: &Context, def: &ast::ComplexTypeDef, namespace: &ast::Namespace) -> Vec<ast::Name> {
+fn generate_dependency_list_for_type(ctx: &Context, def: &ast::ComplexTypeDef) -> Vec<ast::Name> {
     let id = def.id();
     let def_info = ctx.type_info().get(&id).unwrap();
     let def_path = def_info.fqn().parent();
@@ -520,7 +508,7 @@ fn codegen_namespace_contents(ctx: &Context, namespace: &ast::Namespace) -> Stri
     // Sort types so that every type is fully defined when it's needed.
     let mut type_dependencies : HashMap<&ast::Name, Vec<ast::Name>> = HashMap::new();
     for def in namespace.defs() {
-        type_dependencies.insert(def.name(), generate_dependency_list_for_type(ctx, def, namespace));
+        type_dependencies.insert(def.name(), generate_dependency_list_for_type(ctx, def));
     }
 
     let mut sorted_type_dependencies = vec!();
@@ -568,7 +556,7 @@ fn codegen_namespace(ctx: &Context, name: &ast::Name, namespace: &ast::Namespace
     .replace("#CONTENTS", &codegen_namespace_contents(&ctx.with_child_namespace(name), namespace))
 }
 
-fn codegen_import(ctx: &Context, import: &ast::Import) -> String {
+fn codegen_import(import: &ast::Import) -> String {
     format!("#include \"{}\"", import.text())
 }
 
@@ -585,7 +573,7 @@ fn codegen_file(ctx: &Context, file_def: &ast::FileDef) -> (PathBuf, String) {
             "#IMPORTS",
             &file_def.imports()
                 .iter()
-                .map(|it| codegen_import(ctx, it))
+                .map(|it| codegen_import(it))
                 .collect::<Vec<String>>()
                 .join("\n")
         )

@@ -2,7 +2,6 @@ use crate::getset::{Getters, CopyGetters, MutGetters, Setters};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use multimap::MultiMap;
-use indoc::indoc;
 
 use crate::cpp::ast::*;
 use parser::ast::CodeGeneratorRequest;
@@ -151,33 +150,6 @@ fn translate_parser_field_to_enumerant(f: &parser::ast::Field) -> Name {
 fn generate_refid_for_union_which(id: Id) -> Id {
     id + 1
 }
-/*
-fn generate_refid_for_union_data(id: Id) -> Id {
-    id + 2
-}
-
-fn generate_union_like_class(id: Id, name: &Name, fields: &Vec<parser::ast::Field>) -> Class {
-
-    let which = EnumClass::new(
-        generate_refid_for_union_which(id),
-        Name::from("Which"),
-        fields.iter().map(translate_parser_field_to_enumerant).collect()
-    );
-
-    let union = Union::new(
-        generate_refid_for_union_data(id),
-        Name::from(""),
-        fields.iter().map(translate_parser_field_to_cpp_field).collect()
-    );
-
-    Class::new(
-        id,
-        name.clone(),
-        vec!(ComplexTypeDef::EnumClass(which), ComplexTypeDef::Union(union)),
-        vec!(Field::new(Name::from("which"), CppType::RefId(generate_refid_for_union_which(id))))
-    )
-}
-*/
 
 fn generate_base_ast_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, node: &parser::ast::Node) -> ComplexTypeDef
 {
@@ -323,7 +295,7 @@ fn generate_header_body(ast: &Namespace) -> Namespace {
     ast.clone()
 }
 
-fn generate_header(ctx: &Context, cgr: &CodeGeneratorRequest, ast: &Namespace) -> FileDef {
+fn generate_header(cgr: &CodeGeneratorRequest, ast: &Namespace) -> FileDef {
     FileDef::new(
         Name::from("lib"),
         String::from("hpp"),
@@ -340,6 +312,6 @@ pub fn translate(ctx: &Context, cgr: &CodeGeneratorRequest) -> CppAst {
     let ast = generate_base_ast(&ctx, cgr);
 
     return CppAst::new(vec!(
-        generate_header(&ctx, cgr, &ast)
+        generate_header(cgr, &ast)
     ));
 }
