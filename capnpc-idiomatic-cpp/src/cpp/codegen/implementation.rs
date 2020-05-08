@@ -11,27 +11,6 @@ fn is_complex_cpp_type(t: &ast::CppType) -> bool {
     }
 }
 
-fn codegen_constructors(ctx: &Context, c: &ast::Class) -> Vec<String> {
-    let mut ret = vec!();
-
-    match c.union() {
-        Some(u) => {
-            for field in u.fields() {
-                let mut fields = c.fields().clone();
-                fields.push(ast::Field::new(ast::Name::from("whichData"), field.cpp_type().clone()));
-                ret.push(codegen_constructor(ctx, c, &fields))
-            }
-        }
-        None => {
-            ret.push(codegen_constructor(ctx, c, c.fields()))
-        }
-    };
-
-    //ret.push(format!("#NAME(#NAME&& other);").replace("#NAME", &c.name().to_string()));
-    //ret.push(format!("~{}();", c.name().to_string()));
-    return ret;
-}
-
 fn codegen_rvalue_ref_arg(ctx: &Context, f: &ast::Field) -> String {
     format!("{}&& {}", codegen_cpp_type(ctx, f.cpp_type()), f.name().to_string())
 }
@@ -42,6 +21,41 @@ fn codegen_constructor_initializer(f: &ast::Field) -> String {
     } else {
         format!("_#NAME(#NAME)").replace("#NAME", &f.name().to_string())
     }
+}
+
+fn codegen_move_constructor_initializer(f: &ast::Field) -> String {
+    if is_complex_cpp_type(&f.cpp_type()) {
+        format!("_#NAME(std::move(other._#NAME))").replace("#NAME", &f.name().to_string())
+    } else {
+        format!("_#NAME(other._#NAME)").replace("#NAME", &f.name().to_string())
+    }
+}
+
+fn codegen_move_constructor_assign(f: &ast::Field) -> String {
+    if is_complex_cpp_type(&f.cpp_type()) {
+        format!("_#NAME = std::move(other._#NAME);").replace("#NAME", &f.name().to_string())
+    } else {
+        format!("_#NAME = other._#NAME;").replace("#NAME", &f.name().to_string())
+    }
+}
+
+fn codegen_move_constructor(ctx: &Context, c: &ast::Class) -> String {
+    let mut field_assignments = c.fields().iter().map(codegen_move_constructor_initializer).collect::<Vec<String>>();
+    if let Some(_) = c.union() {
+        field_assignments.push(String::from("_whichData(std::move(other._whichData))"));
+    }
+
+    indoc!(
+        "#TYPE::#NAME(#TYPE&& other) :
+            #FIELD_ASSIGNMENTS
+        {}"
+    )
+    .replace("#TYPE", &ctx.current_namespace().with_appended(c.name()).to_string())
+    .replace("#NAME", &c.name().to_string())
+    .replace(
+        "#FIELD_ASSIGNMENTS",
+        &field_assignments.join(",\n    ")
+    )
 }
 
 fn codegen_constructor(ctx: &Context, c: &ast::Class, fields: &Vec<ast::Field>) -> String {
@@ -61,6 +75,31 @@ fn codegen_constructor(ctx: &Context, c: &ast::Class, fields: &Vec<ast::Field>) 
         "#FIELDS",
         &fields.iter().map(|f| codegen_constructor_initializer(f)).collect::<Vec<String>>().join(",\n    ")
     )
+}
+
+fn codegen_destructor(ctx: &Context, c: &ast::Class) -> String {
+    format!("{}::~{}() {{}}", ctx.current_namespace().with_appended(c.name()).to_string(), c.name().to_string())
+}
+
+fn codegen_constructors(ctx: &Context, c: &ast::Class) -> Vec<String> {
+    let mut ret = vec!();
+
+    match c.union() {
+        Some(u) => {
+            for field in u.fields() {
+                let mut fields = c.fields().clone();
+                fields.push(ast::Field::new(ast::Name::from("whichData"), field.cpp_type().clone()));
+                ret.push(codegen_constructor(ctx, c, &fields));
+            }
+        }
+        None => {
+            ret.push(codegen_constructor(ctx, c, c.fields()));
+        }
+    };
+
+    ret.push(codegen_move_constructor(ctx, c));
+    ret.push(codegen_destructor(ctx, c));
+    return ret;
 }
 
 fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
