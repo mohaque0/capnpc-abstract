@@ -1,82 +1,5 @@
-use crate::getset::{Getters, CopyGetters, MutGetters, Setters};
-use std::collections::HashMap;
-use std::path::PathBuf;
-use indoc::indoc;
+use super::*;
 
-use crate::cpp::ast;
-
-#[derive(Constructor, Clone, CopyGetters, Getters, Setters)]
-#[get]
-struct TypeInfo {
-    name: ast::Name,
-    fqn: ast::FullyQualifiedName
-}
-
-#[derive(Clone, CopyGetters, MutGetters, Getters, Setters)]
-#[getset(get, get_mut)]
-pub struct Context {
-    out_dir: PathBuf,
-    type_info: HashMap<ast::Id, TypeInfo>,
-    current_namespace: ast::FullyQualifiedName
-}
-
-#[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
-#[get = "pub"]
-pub struct Code {
-    files: HashMap<PathBuf, String>
-}
-
-impl Context {
-
-    pub fn new(out_dir: PathBuf) -> Context {
-        Context { out_dir: out_dir, type_info: HashMap::new(), current_namespace: ast::FullyQualifiedName::empty() }
-    }
-
-    pub fn with_child_namespace(&self, name: &ast::Name) -> Context {
-        Context {
-            out_dir: self.out_dir.clone(),
-            type_info: self.type_info.clone(),
-            current_namespace: self.current_namespace.with_appended(name)
-        }
-    }
-
-    fn set_type_info_from_complex_type_def(&mut self, fqn: &ast::FullyQualifiedName, t: &ast::ComplexTypeDef) {
-        match t {
-            ast::ComplexTypeDef::EnumClass(e) => {
-                self.type_info.insert(*e.id(), TypeInfo::new(e.name().clone(), fqn.with_appended(&e.name())));
-            },
-            ast::ComplexTypeDef::Class(c) => {
-                self.type_info.insert(*c.id(), TypeInfo::new(c.name().clone(), fqn.with_appended(&c.name())));
-                c.inner_types().iter().for_each(|t| self.set_type_info_from_complex_type_def(&fqn.with_appended(c.name()), t))
-            }
-        }
-    }
-
-    fn set_type_info_from_namespace(&mut self, fqn: &ast::FullyQualifiedName, n: &ast::Namespace) {
-        n.defs().iter().for_each(|t| self.set_type_info_from_complex_type_def(fqn, t));
-        n.namespaces()
-            .iter()
-            .for_each(|(name,namespace)| self.set_type_info_from_namespace(&fqn.with_appended(name), namespace));
-    }
-
-    fn set_type_info_from_file(&mut self, f: &ast::FileDef) {
-        self.set_type_info_from_namespace(&ast::FullyQualifiedName::empty(), f.namespace())
-    }
-
-    fn set_type_info_from(&mut self, ast: &ast::CppAst) {
-        ast.files().iter().for_each(|f| self.set_type_info_from_file(f))
-    }
-
-    fn resolve_full_name(&self, id: ast::Id) -> String {
-        match self.type_info.get(&id) {
-            Some(info) => info.fqn().to_string(),
-            None => {
-                println!("WARNING: Unable to resolve reference for id: {}", id);
-                format!("ref<{}>", id)
-            }
-        }
-    }
-}
 
 fn codegen_enum_class(enum_class: &ast::EnumClass) -> String {
     indoc!("
@@ -524,10 +447,7 @@ fn codegen_namespace_contents(ctx: &Context, namespace: &ast::Namespace) -> Stri
             }
         }
     }
-
-    //println!("Type Order: {:?}", sorted_types.iter().map(|it| it.name().to_string()).collect::<Vec<String>>());
-    //println!("Orig Order: {:?}", namespace.defs().iter().map(|it| it.name().to_string()).collect::<Vec<String>>());
-
+    
     namespace_defs.push(
         sorted_types
             .iter()
@@ -556,13 +476,9 @@ fn codegen_namespace(ctx: &Context, name: &ast::Name, namespace: &ast::Namespace
     .replace("#CONTENTS", &codegen_namespace_contents(&ctx.with_child_namespace(name), namespace))
 }
 
-fn codegen_import(import: &ast::Import) -> String {
-    format!("#include \"{}\"", import.text())
-}
-
-fn codegen_file(ctx: &Context, file_def: &ast::FileDef) -> (PathBuf, String) {
+pub fn codegen_header_file(ctx: &Context, compilation_unit: &ast::CompilationUnit) -> (PathBuf, String) {
     let mut path = ctx.out_dir().clone();
-    path.push(format!("{}.{}", file_def.name().to_string(), file_def.ext()));
+    path.push(format!("{}.{}", compilation_unit.name().to_string(), compilation_unit.ext()));
 
     let code = indoc!(
         "#IMPORTS
@@ -571,7 +487,7 @@ fn codegen_file(ctx: &Context, file_def: &ast::FileDef) -> (PathBuf, String) {
     )
         .replace(
             "#IMPORTS",
-            &file_def.imports()
+            &compilation_unit.imports()
                 .iter()
                 .map(|it| codegen_import(it))
                 .collect::<Vec<String>>()
@@ -579,18 +495,9 @@ fn codegen_file(ctx: &Context, file_def: &ast::FileDef) -> (PathBuf, String) {
         )
         .replace(
             "#DEFINITIONS",
-            &codegen_namespace_contents(ctx, &file_def.namespace())
+            &codegen_namespace_contents(ctx, &compilation_unit.namespace())
         )
         .replace("    ", "\t");
 
     return (path, code);
 }
-
-pub fn codegen(ctx: &Context, ast: ast::CppAst) -> Code {
-    let mut ctx = ctx.clone();
-    ctx.set_type_info_from(&ast);
-    Code {
-        files: ast.files().iter().map(|file_def| codegen_file(&ctx, file_def)).collect()
-    }
-}
-

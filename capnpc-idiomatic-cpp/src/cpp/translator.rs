@@ -295,8 +295,8 @@ fn generate_header_body(ast: &Namespace) -> Namespace {
     ast.clone()
 }
 
-fn generate_header(cgr: &CodeGeneratorRequest, ast: &Namespace) -> FileDef {
-    FileDef::new(
+fn generate_header(cgr: &CodeGeneratorRequest, ast: &Namespace) -> CompilationUnit {
+    CompilationUnit::new(
         Name::from("lib"),
         String::from("hpp"),
         generate_imports(cgr),

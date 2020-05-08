@@ -98,7 +98,7 @@ pub struct Import {
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
 #[get = "pub"]
-pub struct FileDef {
+pub struct CompilationUnit {
     name: Name,
     ext: String,
     imports: Vec<Import>,
@@ -108,7 +108,7 @@ pub struct FileDef {
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
 #[get = "pub"]
 pub struct CppAst {
-    files: Vec<FileDef>
+    files: Vec<CompilationUnit>
 }
 
 
@@ -388,7 +388,7 @@ impl ComplexTypeDef {
 }
 
 #[allow(dead_code)]
-impl FileDef {
+impl CompilationUnit {
     pub fn get_namespace(&self, name: &FullyQualifiedName) -> Option<&Namespace> {
         self.namespace.get_namespace(name)
     }
