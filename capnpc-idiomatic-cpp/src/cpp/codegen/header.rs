@@ -23,16 +23,16 @@ fn codegen_field(ctx: &Context, f: &ast::Field) -> String {
 }
 
 fn codegen_field_getter_prototype(ctx: &Context, f: &ast::Field) -> String {
-    indoc!("const #TYPE& #GETTER() const;")
-    .replace("#TYPE", &codegen_cpp_type(ctx, f.cpp_type()))
+    indoc!("const #TYPE #GETTER() const;")
+    .replace("#TYPE", &codegen_type_as_ref_if_complex(ctx, f.cpp_type()))
     .replace("#GETTER", &f.name().to_lower_camel_case(&[]))
 }
 
 fn codegen_field_setter_prototype(ctx: &Context, class_name: &ast::Name, f: &ast::Field) -> String {
-    indoc!("#CLASS& #SETTER(#TYPE& val);")
-    .replace("#TYPE", &codegen_cpp_type(ctx, f.cpp_type()))
+    indoc!("#CLASS& #SETTER(#TYPE val);")
+    .replace("#TYPE", &codegen_type_as_ref_if_complex(ctx, f.cpp_type()))
     .replace("#CLASS", &class_name.to_string())
-    .replace("#SETTER", &f.name().with_prepended("set").to_lower_camel_case(&[]))
+    .replace("#SETTER", &f.name().to_lower_camel_case(&[]))
 }
 
 fn codegen_union_getter_prototypes(ctx: &Context, u_option: &Option<ast::UnnamedUnion>) -> Vec<String> {
@@ -118,6 +118,7 @@ fn codegen_constructor_prototypes(ctx: &Context, c: &ast::Class) -> Vec<String> 
     };
 
     ret.push(format!("#NAME(#NAME&& other);").replace("#NAME", &c.name().to_string()));
+    ret.push(format!("#NAME& operator=(#NAME&& other);").replace("#NAME", &c.name().to_string()));
     ret.push(format!("~{}();", c.name().to_string()));
     return ret;
 }

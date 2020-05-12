@@ -81,6 +81,20 @@ impl Context {
     }
 }
 
+
+fn is_complex_cpp_type(t: &ast::CppType) -> bool {
+    match t {
+        ast::CppType::String => true,
+        ast::CppType::Vector(_) => true,
+        ast::CppType::RefId(_) => true,
+        _ => false
+    }
+}
+
+fn is_primitive_cpp_type(t: &ast::CppType) -> bool {
+    return !is_complex_cpp_type(t);
+}
+
 fn codegen_cpp_type(ctx: &Context, t: &ast::CppType) -> String {
     match t {
         ast::CppType::Void => String::from("void"),
@@ -98,6 +112,15 @@ fn codegen_cpp_type(ctx: &Context, t: &ast::CppType) -> String {
         ast::CppType::String => String::from("std::string"),
         ast::CppType::Vector(t) => format!("std::vector<{}>", codegen_cpp_type(ctx, &*t)),
         ast::CppType::RefId(id) => format!("{}", ctx.resolve_full_name(*id).to_string())
+    }
+}
+
+fn codegen_type_as_ref_if_complex(ctx: &Context, t: &ast::CppType) -> String {
+    let base_type = codegen_cpp_type(ctx, t);
+    if is_complex_cpp_type(t) {
+        format!("{}&", base_type)
+    } else {
+        base_type
     }
 }
 
