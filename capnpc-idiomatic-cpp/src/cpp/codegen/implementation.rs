@@ -2,8 +2,8 @@ use indoc::indoc;
 use super::*;
 
 
-fn codegen_rvalue_ref_arg(ctx: &Context, f: &ast::Field) -> String {
-    format!("{}&& {}", codegen_cpp_type(ctx, f.cpp_type()), f.name().to_string())
+fn codegen_constructor_arg(ctx: &Context, f: &ast::Field) -> String {
+    format!("{} {}", codegen_type_as_rvalue_ref_if_complex(ctx, f.cpp_type()), f.name().to_string())
 }
 
 fn codegen_constructor_initializer(f: &ast::Field) -> String {
@@ -87,7 +87,7 @@ fn codegen_constructor(ctx: &Context, c: &ast::Class, fields: &Vec<ast::Field>) 
     .replace("#NAME", &c.name().to_string())
     .replace(
         "#ARGS",
-        &fields.iter().map(|f| codegen_rvalue_ref_arg(ctx, f)).collect::<Vec<String>>().join(",\n    ")
+        &fields.iter().map(|f| codegen_constructor_arg(ctx, f)).collect::<Vec<String>>().join(",\n    ")
     )
     .replace(
         "#FIELDS",

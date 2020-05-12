@@ -124,6 +124,15 @@ fn codegen_type_as_ref_if_complex(ctx: &Context, t: &ast::CppType) -> String {
     }
 }
 
+fn codegen_type_as_rvalue_ref_if_complex(ctx: &Context, t: &ast::CppType) -> String {
+    let base_type = codegen_cpp_type(ctx, t);
+    if is_complex_cpp_type(t) {
+        format!("{}&&", base_type)
+    } else {
+        base_type
+    }
+}
+
 fn codegen_import(import: &ast::Import) -> String {
     format!("#include \"{}\"", import.text())
 }

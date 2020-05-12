@@ -95,7 +95,7 @@ fn codegen_constructor_prototype_fields(ctx: &Context, class_name: &ast::Name, f
     .replace(
         "#FIELDS",
         &fields.iter()
-            .map(|f| format!("{}&& {}", codegen_cpp_type(ctx, f.cpp_type()), f.name().to_string()).to_string())
+            .map(|f| format!("{} {}", codegen_type_as_rvalue_ref_if_complex(ctx, f.cpp_type()), f.name().to_string()).to_string())
             .collect::<Vec<String>>()
             .join(",\n    ")
     )
