@@ -57,7 +57,7 @@ fn codegen_union_setter_prototypes(ctx: &Context, class_name: &ast::Name, u_opti
             u.fields()
                 .iter()
                 .map(|f| {
-                    indoc!("#CLASS& #SETTER(#TYPE&& val) const;")
+                    indoc!("#CLASS& #SETTER(#TYPE&& val);")
                     .replace("#CLASS", &class_name.to_string())
                     .replace("#TYPE", &codegen_cpp_type(ctx, f.cpp_type()))
                     .replace("#SETTER", &f.name().with_prepended("as").with_prepended("set").to_lower_camel_case(&[]))

@@ -147,6 +147,35 @@ fn codegen_field_setter(ctx: &Context, c: &ast::Class, f: &ast::Field) -> String
     .replace("#FIELD", &f.name().to_string())
 }
 
+fn codegen_union_field_getter(ctx: &Context, c: &ast::Class, f: &ast::Field, field_idx: usize) -> String {
+    indoc!("
+    const #TYPE #NAMESPACE::#CLASS_NAME::#METHOD_NAME() const {
+        return std::get<#FIELD_INDEX>(_whichData);
+    }
+    ")
+    .replace("#TYPE", &codegen_type_as_ref_if_complex(ctx, f.cpp_type()))
+    .replace("#NAMESPACE", &ctx.current_namespace().to_string())
+    .replace("#CLASS_NAME", &c.name().to_string())
+    .replace("#METHOD_NAME", &f.name().with_prepended("as").to_lower_camel_case(&[]).to_string())
+    .replace("#FIELD_INDEX", &field_idx.to_string())
+}
+
+fn codegen_union_field_setter(ctx: &Context, c: &ast::Class, f: &ast::Field, field_idx: usize) -> String {
+    indoc!("
+    #NAMESPACE::#CLASS_NAME& #NAMESPACE::#CLASS_NAME::#METHOD_NAME(#TYPE val) {
+        _whichData.emplace<#FIELD_INDEX>(std::move(val));
+        _which = #NAMESPACE::#CLASS_NAME::Which::#WHICH_KIND;
+        return *this;
+    }
+    ")
+    .replace("#TYPE", &codegen_type_as_rvalue_ref_if_complex(ctx, f.cpp_type()))
+    .replace("#NAMESPACE", &ctx.current_namespace().to_string())
+    .replace("#CLASS_NAME", &c.name().to_string())
+    .replace("#METHOD_NAME", &f.name().with_prepended("as").with_prepended("set").to_lower_camel_case(&[]).to_string())
+    .replace("#FIELD_INDEX", &field_idx.to_string())
+    .replace("#WHICH_KIND", &f.name().to_upper_camel_case(&[]).to_string())
+}
+
 fn codegen_field_accessors(ctx: &Context, c: &ast::Class) -> Vec<String> {
     let mut ret = vec!();
 
@@ -154,6 +183,13 @@ fn codegen_field_accessors(ctx: &Context, c: &ast::Class) -> Vec<String> {
         ret.push(codegen_field_getter(ctx, c, f));
         if f.name().to_string() != "which" {
             ret.push(codegen_field_setter(ctx, c, f));
+        }
+    }
+
+    if let Some(u) = c.union() {
+        for (i,f) in u.fields().iter().enumerate() {
+            ret.push(codegen_union_field_getter(ctx, c, f, i));
+            ret.push(codegen_union_field_setter(ctx, c, f, i));
         }
     }
 
