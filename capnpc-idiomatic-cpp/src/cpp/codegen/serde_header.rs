@@ -6,7 +6,7 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
     let idiomatic_class = format!("{}::{}", ctx.current_namespace().to_string(), c.name().to_string());
 
     vec!(
-        String::from("void serialize(#CAPNP_CLASS::Builder&, const #IDIOMATIC_CLASS&);")
+        String::from("void serialize(#CAPNP_CLASS::Builder, const #IDIOMATIC_CLASS&);")
             .replace("#CAPNP_CLASS", &ctx.capnp_names().get(c.id()).unwrap().to_string())
             .replace("#IDIOMATIC_CLASS", &idiomatic_class),
         String::from("#IDIOMATIC_CLASS deserialize(const #CAPNP_CLASS::Reader&);")
@@ -54,7 +54,9 @@ pub fn codegen_serde_header_file(ctx: &Context, compilation_unit: &ast::Compilat
     path.push(format!("{}.hpp", compilation_unit.name().to_string()));
 
     let code = indoc!(
-        "#IMPORTS
+        "#pragma once
+        
+        #IMPORTS
         
         namespace Serde {
         #DEFINITIONS

@@ -462,7 +462,9 @@ pub fn codegen_header_file(ctx: &Context, compilation_unit: &ast::CompilationUni
     path.push(format!("{}.{}", compilation_unit.name().to_string(), compilation_unit.ext()));
 
     let code = indoc!(
-        "#IMPORTS
+        "#pragma once
+        
+        #IMPORTS
         
         #DEFINITIONS"
     )
