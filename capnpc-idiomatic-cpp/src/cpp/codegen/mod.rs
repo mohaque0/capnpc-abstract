@@ -7,6 +7,8 @@ use crate::cpp::ast;
 
 mod header;
 mod implementation;
+mod serde_header;
+mod serde_implementation;
 
 #[derive(Constructor, Clone, CopyGetters, Getters, Setters)]
 #[get]
@@ -20,6 +22,7 @@ struct TypeInfo {
 pub struct Context {
     out_dir: PathBuf,
     type_info: HashMap<ast::Id, TypeInfo>,
+    capnp_names: HashMap<ast::Id, ast::FullyQualifiedName>,
     current_namespace: ast::FullyQualifiedName
 }
 
@@ -31,14 +34,19 @@ pub struct Code {
 
 impl Context {
 
-    pub fn new(out_dir: PathBuf) -> Context {
-        Context { out_dir: out_dir, type_info: HashMap::new(), current_namespace: ast::FullyQualifiedName::empty() }
+    pub fn new(out_dir: PathBuf, capnp_names: &HashMap<ast::Id, ast::FullyQualifiedName>) -> Context {
+        Context { out_dir: out_dir,
+            type_info: HashMap::new(),
+            capnp_names: capnp_names.clone(),
+            current_namespace: ast::FullyQualifiedName::empty()
+        }
     }
 
     pub fn with_child_namespace(&self, name: &ast::Name) -> Context {
         Context {
             out_dir: self.out_dir.clone(),
             type_info: self.type_info.clone(),
+            capnp_names: self.capnp_names.clone(),
             current_namespace: self.current_namespace.with_appended(name)
         }
     }
@@ -91,10 +99,6 @@ fn is_complex_cpp_type(t: &ast::CppType) -> bool {
     }
 }
 
-fn is_primitive_cpp_type(t: &ast::CppType) -> bool {
-    return !is_complex_cpp_type(t);
-}
-
 fn codegen_cpp_type(ctx: &Context, t: &ast::CppType) -> String {
     match t {
         ast::CppType::Void => String::from("void"),
@@ -142,8 +146,19 @@ pub fn codegen(ctx: &Context, ast: ast::CppAst) -> Code {
     ctx.set_type_info_from(&ast);
 
     let mut files = HashMap::new();
-    files.extend(ast.files().iter().map(|compilation_unit| header::codegen_header_file(&ctx, compilation_unit)));
-    files.extend(ast.files().iter().map(|compilation_unit| implementation::codegen_cpp_file(&ctx, compilation_unit)));
+    for compilation_unit in ast.files() {
+        if !compilation_unit.is_serde_file() {
+            let (header_path, header_contents) = header::codegen_header_file(&ctx, compilation_unit);
+            let (impl_path, impl_contents) = implementation::codegen_cpp_file(&ctx, compilation_unit);
+            files.insert(header_path, header_contents);
+            files.insert(impl_path, impl_contents);
+        } else {
+            let (header_path, header_contents) = serde_header::codegen_serde_header_file(&ctx, compilation_unit);
+            let (impl_path, impl_contents) = serde_implementation::codegen_serde_cpp_file(&ctx, compilation_unit);
+            files.insert(header_path, header_contents);
+            files.insert(impl_path, impl_contents);
+        }
+    }
 
     Code {
         files: files

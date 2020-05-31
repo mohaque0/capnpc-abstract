@@ -29,7 +29,11 @@ pub struct Context {
     children: MultiMap<Id, Id>,
 
     #[getset(get, get_mut)]
-    nodes: HashMap<Id, crate::parser::ast::Node>
+    nodes: HashMap<Id, crate::parser::ast::Node>,
+
+    #[get = "pub"]
+    #[get_mut]
+    capnp_names: HashMap<Id, FullyQualifiedName>
 }
 
 impl Context {
@@ -42,7 +46,8 @@ impl Context {
             namespace: FullyQualifiedName::empty(),
             names: HashMap::new(),
             children: MultiMap::new(),
-            nodes: HashMap::new()
+            nodes: HashMap::new(),
+            capnp_names: HashMap::new()
         }
     }
 
@@ -102,6 +107,48 @@ impl Context {
             self.children_mut().insert(node.scope_id(), node.id());
             self.nodes_mut().insert(node.id(), node.clone());
         }
+    }
+
+    fn set_capnp_names_for_child_nodes(&mut self, fqn: &FullyQualifiedName, node: &parser::ast::Node) {
+        let name = self.names().get(&node.id()).expect(&format!("Unable to find name for node: {}", node.id())).clone();
+        self.capnp_names.insert(node.id(), fqn.with_appended(&name));
+
+        let child_ids = self.children.get_vec(&node.id())
+            .unwrap_or(&vec!())
+            .iter()
+            .map(|it| *it)
+            .collect::<Vec<u64>>();
+
+        child_ids.iter()
+            .for_each(|child_id| {
+                let child_node = self.nodes().get(child_id).expect(&format!("Unable to find child node with id: {}", child_id)).clone();
+                self.set_capnp_names_for_child_nodes(&fqn, &child_node);
+            });
+    }
+
+    fn set_capnp_names_from(&mut self, cgr: &CodeGeneratorRequest) {
+        let files = cgr.nodes()
+            .iter()
+            .filter(|node| node.which() == &crate::parser::ast::node::Which::File)
+            .collect::<Vec<&parser::ast::Node>>();
+
+        files.iter().for_each(|file_node| {
+            let ns_name = file_node.annotations()
+                .iter()
+                .find(|a| a.id() == self.namespace_annotation_id());
+
+            if let None = ns_name {
+                println!("WARN: Unable to find capnp namespace annotation for file: {}", file_node.display_name());
+                return;
+            }
+            
+            if let parser::ast::Value::Text(t) = ns_name.unwrap().value() {
+                let fqn = FullyQualifiedName::from(t.split("::").collect::<Vec<&str>>());
+                self.set_capnp_names_for_child_nodes(&fqn, &file_node);
+            } else {
+                panic!("Value for capnp namespace annotation was not a string.")
+            }
+        });
     }
 }
 
@@ -284,34 +331,47 @@ fn generate_imports(cgr: &CodeGeneratorRequest) -> Vec<Import> {
         .map(|filename| format!("{}{}", filename, ".h"))
         .map(|filename| Import::new(filename))
         .collect();
-    imports.push(Import::new(String::from("capnp/message.h")));
-    imports.push(Import::new(String::from("capnp/serialize-packed.h")));
     imports.push(Import::new(String::from("variant")));
     imports.push(Import::new(String::from("vector")));
     return imports;
 }
 
-fn generate_header_body(ast: &Namespace) -> Namespace {
-    ast.clone()
-}
-
-fn generate_header(cgr: &CodeGeneratorRequest, ast: &Namespace) -> CompilationUnit {
+fn generate_poco(cgr: &CodeGeneratorRequest, ast: &Namespace) -> CompilationUnit {
     CompilationUnit::new(
         Name::from("lib"),
         String::from("hpp"),
         generate_imports(cgr),
-        generate_header_body(ast)
+        ast.clone(),
+        false,
     )
 }
 
-pub fn translate(ctx: &Context, cgr: &CodeGeneratorRequest) -> CppAst {
-    let mut ctx = ctx.clone();
+fn generate_serde(cgr: &CodeGeneratorRequest, ast: &Namespace) -> CompilationUnit{
+    let mut imports = generate_imports(cgr);
+    imports.push(Import::new(String::from("capnp/message.h")));
+    imports.push(Import::new(String::from("capnp/serialize-packed.h")));
+    imports.push(Import::new(String::from("lib.hpp")));
+
+    CompilationUnit::new(
+        Name::from("serde"),
+        String::from("hpp"),
+        imports,
+        ast.clone(),
+        true
+    )
+}
+
+pub fn build_translation_context(ctx: &mut Context, cgr: &CodeGeneratorRequest) {
     ctx.set_annotation_ids_from(&cgr);
     ctx.set_names_from(&cgr);
+    ctx.set_capnp_names_from(&cgr);
+}
 
+pub fn translate(ctx: &Context, cgr: &CodeGeneratorRequest) -> CppAst {
     let ast = generate_base_ast(&ctx, cgr);
 
     return CppAst::new(vec!(
-        generate_header(cgr, &ast)
+        generate_poco(cgr, &ast),
+        generate_serde(cgr, &ast),
     ));
 }

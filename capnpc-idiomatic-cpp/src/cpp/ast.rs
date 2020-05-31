@@ -97,12 +97,22 @@ pub struct Import {
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
-#[get = "pub"]
 pub struct CompilationUnit {
+
+    #[get = "pub"]
     name: Name,
+
+    #[get = "pub"]
     ext: String,
+
+    #[get = "pub"]
     imports: Vec<Import>,
-    namespace: Namespace
+
+    #[get = "pub"]
+    namespace: Namespace,
+
+    #[get_copy = "pub"]
+    is_serde_file: bool
 }
 
 #[derive(Constructor, Clone, Getters, CopyGetters, Setters, Debug, PartialEq)]
