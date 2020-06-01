@@ -139,6 +139,12 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
     defs
 }
 
+fn codegen_enumerant_serialization(enumerant: &ast::Name, idiomatic_enum: &String, capnp_enum: &String) -> String {
+    String::from("case #IDIOMATIC_CASE: return #CAPNP_CASE;")
+        .replace("#IDIOMATIC_CASE", &format!("{}::{}", idiomatic_enum, enumerant.to_upper_camel_case(&[])))
+        .replace("#CAPNP_CASE", &format!("{}::{}", capnp_enum, enumerant.to_screaming_snake_case(&[])))
+}
+
 fn codegen_enum(ctx: &Context, e: &ast::EnumClass) -> Vec<String> {
     if e.name().to_string() == "Which" {
         return vec!();
@@ -148,14 +154,28 @@ fn codegen_enum(ctx: &Context, e: &ast::EnumClass) -> Vec<String> {
         println!("ERROR: Unable to find name for: {}", e.id());
     }
 
-    let idiomatic_class = format!("{}::{}", ctx.current_namespace().to_string(), e.name().to_string());
+    let idiomatic_enum = format!("{}::{}", ctx.current_namespace().to_string(), e.name().to_string());
+    let capnp_enum = ctx.capnp_names().get(e.id()).unwrap().to_string();
 
     vec!(
-        String::from("#ENUM serialize(#IDIOMATIC_CLASS) {}")
-            .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string())
-            .replace("#IDIOMATIC_CLASS", &idiomatic_class),
-        String::from("void deserialize(#ENUM) {}")
-            .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string()),
+        indoc!("#CAPNP_ENUM serialize(#IDIOMATIC_ENUM src) {
+            switch (src) {
+                #CASES
+            }
+        }")
+            .replace("#CAPNP_ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string())
+            .replace("#IDIOMATIC_ENUM", &idiomatic_enum)
+            .replace(
+                "#CASES",
+                &e.enumerants()
+                    .iter()
+                    .map(|e| codegen_enumerant_serialization(e, &idiomatic_enum, &capnp_enum))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+                    .replace("\n", "\n        ")
+                ),
+        String::from("void deserialize(#IDIOMATIC_ENUM) {}")
+            .replace("#IDIOMATIC_ENUM", &idiomatic_enum),
     )
 }
 
