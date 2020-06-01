@@ -14,7 +14,8 @@ mod serde_implementation;
 #[get]
 struct TypeInfo {
     name: ast::Name,
-    fqn: ast::FullyQualifiedName
+    fqn: ast::FullyQualifiedName,
+    cpp_type: ast::ComplexTypeDef
 }
 
 #[derive(Clone, CopyGetters, MutGetters, Getters, Setters)]
@@ -54,10 +55,10 @@ impl Context {
     fn set_type_info_from_complex_type_def(&mut self, fqn: &ast::FullyQualifiedName, t: &ast::ComplexTypeDef) {
         match t {
             ast::ComplexTypeDef::EnumClass(e) => {
-                self.type_info.insert(*e.id(), TypeInfo::new(e.name().clone(), fqn.with_appended(&e.name())));
+                self.type_info.insert(*e.id(), TypeInfo::new(e.name().clone(), fqn.with_appended(&e.name()), t.clone()));
             },
             ast::ComplexTypeDef::Class(c) => {
-                self.type_info.insert(*c.id(), TypeInfo::new(c.name().clone(), fqn.with_appended(&c.name())));
+                self.type_info.insert(*c.id(), TypeInfo::new(c.name().clone(), fqn.with_appended(&c.name()), t.clone()));
                 c.inner_types().iter().for_each(|t| self.set_type_info_from_complex_type_def(&fqn.with_appended(c.name()), t))
             }
         }

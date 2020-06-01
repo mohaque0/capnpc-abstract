@@ -38,9 +38,12 @@ fn codegen_enum(ctx: &Context, e: &ast::EnumClass) -> Vec<String> {
         println!("ERROR: Unable to find name for: {}", e.id());
     }
 
+    let idiomatic_class = format!("{}::{}", ctx.current_namespace().to_string(), e.name().to_string());
+
     vec!(
-        String::from("void serialize(#ENUM);")
-            .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string()),
+        String::from("#ENUM serialize(#IDIOMATIC_CLASS);")
+            .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string())
+            .replace("#IDIOMATIC_CLASS", &idiomatic_class),
         String::from("void deserialize(#ENUM);")
             .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string()),
     )

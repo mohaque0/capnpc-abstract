@@ -8,19 +8,52 @@ fn stringify_iter(i: &mut dyn Iterator<Item = String>) -> String {
     .to_string()
 }
 
-fn codegen_union_field_setter(ctx: &Context, f: &ast::Field, idiomatic_class: &String) -> String {
-    let setting_code =
-        match f.cpp_type() {
-            ast::CppType::Vector(_) =>
+/**
+ * Expects the following to be replaced in the resulting String:
+ *   #GET_FIELD_METHOD
+ *   #SET_FIELD_METHOD
+ *   #INIT_FIELD_METHOD
+ */
+fn generic_field_setting_code(ctx: &Context, f: &ast::Field) -> String {
+    match f.cpp_type() {
+        ast::CppType::Vector(t) => {
+            let complex_object_serialization_code =
                 indoc!("{
                     auto element_list = builder.#INIT_FIELD_METHOD(src.#GET_FIELD_METHOD().size());
                     for (unsigned int i = 0; i < src.#GET_FIELD_METHOD().size(); i++) {
                         serialize(element_list[i], src.#GET_FIELD_METHOD()[i]);
                     }
-                }"),
-            ast::CppType::RefId(_) => indoc!("serialize(builder.#INIT_FIELD_METHOD(), src.#GET_FIELD_METHOD());"),
-            _ => indoc!("builder.#SET_FIELD_METHOD(src.#GET_FIELD_METHOD());")
-        }
+                }");
+
+            if let ast::CppType::RefId(id) = **t {
+                if let ast::ComplexTypeDef::EnumClass(_) = ctx.type_info().get(&id).unwrap().cpp_type() {
+                    indoc!("{
+                        auto element_list = builder.#INIT_FIELD_METHOD(src.#GET_FIELD_METHOD().size());
+                        for (unsigned int i = 0; i < src.#GET_FIELD_METHOD().size(); i++) {
+                            element_list.set(i, serialize(src.#GET_FIELD_METHOD()[i]));
+                        }
+                    }")
+                } else {
+                    complex_object_serialization_code
+                }
+            } else {
+                complex_object_serialization_code
+            }
+        },
+        ast::CppType::RefId(id) => {
+            let type_info = ctx.type_info().get(id).unwrap();
+            match type_info.cpp_type() {
+                ast::ComplexTypeDef::EnumClass(_) => indoc!("builder.#SET_FIELD_METHOD(serialize(src.#GET_FIELD_METHOD()));"),
+                ast::ComplexTypeDef::Class(_) => indoc!("serialize(builder.#INIT_FIELD_METHOD(), src.#GET_FIELD_METHOD());")
+            }
+        },
+        _ => indoc!("builder.#SET_FIELD_METHOD(src.#GET_FIELD_METHOD());")
+    }.to_string()
+}
+
+fn codegen_union_field_setter(ctx: &Context, f: &ast::Field, idiomatic_class: &String) -> String {
+    let setting_code =
+        generic_field_setting_code(ctx, f)
         .replace("#GET_FIELD_METHOD", &f.name().with_prepended("as").to_lower_camel_case(&[]))
         .replace("#SET_FIELD_METHOD", &f.name().with_prepended("set").to_lower_camel_case(&[]))
         .replace("#INIT_FIELD_METHOD", &f.name().with_prepended("init").to_lower_camel_case(&[]));
@@ -53,17 +86,7 @@ fn codegen_union(ctx: &Context, u: &ast::UnnamedUnion, idiomatic_class: &String)
 }
 
 fn codegen_field_setter(ctx: &Context, f: &ast::Field) -> String {
-    match f.cpp_type() {
-        ast::CppType::Vector(_) =>
-            indoc!("{
-                auto element_list = builder.#INIT_FIELD_METHOD(src.#GET_FIELD_METHOD().size());
-                for (unsigned int i = 0; i < src.#GET_FIELD_METHOD().size(); i++) {
-                    serialize(element_list[i], src.#GET_FIELD_METHOD()[i]);
-                }
-            }"),
-        ast::CppType::RefId(_) => indoc!("serialize(builder.#INIT_FIELD_METHOD(), src.#GET_FIELD_METHOD());"),
-        _ => indoc!("builder.#SET_FIELD_METHOD(src.#GET_FIELD_METHOD());")
-    }
+    generic_field_setting_code(ctx, f)
     .replace("#GET_FIELD_METHOD", &f.name().to_lower_camel_case(&[]))
     .replace("#SET_FIELD_METHOD", &f.name().with_prepended("set").to_lower_camel_case(&[]))
     .replace("#INIT_FIELD_METHOD", &f.name().with_prepended("init").to_lower_camel_case(&[]))
@@ -125,10 +148,13 @@ fn codegen_enum(ctx: &Context, e: &ast::EnumClass) -> Vec<String> {
         println!("ERROR: Unable to find name for: {}", e.id());
     }
 
+    let idiomatic_class = format!("{}::{}", ctx.current_namespace().to_string(), e.name().to_string());
+
     vec!(
-        String::from("void serialize(#ENUM);")
-            .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string()),
-        String::from("void deserialize(#ENUM);")
+        String::from("#ENUM serialize(#IDIOMATIC_CLASS) {}")
+            .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string())
+            .replace("#IDIOMATIC_CLASS", &idiomatic_class),
+        String::from("void deserialize(#ENUM) {}")
             .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string()),
     )
 }
