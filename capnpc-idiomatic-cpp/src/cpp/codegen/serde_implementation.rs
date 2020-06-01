@@ -8,6 +8,49 @@ fn stringify_iter(i: &mut dyn Iterator<Item = String>) -> String {
     .to_string()
 }
 
+fn codegen_union_field_setter(ctx: &Context, f: &ast::Field, idiomatic_class: &String) -> String {
+    let setting_code =
+        match f.cpp_type() {
+            ast::CppType::Vector(_) =>
+                indoc!("{
+                    auto element_list = builder.#INIT_FIELD_METHOD(src.#GET_FIELD_METHOD().size());
+                    for (unsigned int i = 0; i < src.#GET_FIELD_METHOD().size(); i++) {
+                        serialize(element_list[i], src.#GET_FIELD_METHOD()[i]);
+                    }
+                }"),
+            ast::CppType::RefId(_) => indoc!("serialize(builder.#INIT_FIELD_METHOD(), src.#GET_FIELD_METHOD());"),
+            _ => indoc!("builder.#SET_FIELD_METHOD(src.#GET_FIELD_METHOD());")
+        }
+        .replace("#GET_FIELD_METHOD", &f.name().with_prepended("as").to_lower_camel_case(&[]))
+        .replace("#SET_FIELD_METHOD", &f.name().with_prepended("set").to_lower_camel_case(&[]))
+        .replace("#INIT_FIELD_METHOD", &f.name().with_prepended("init").to_lower_camel_case(&[]));
+
+    indoc!(
+        "case #CASE: {
+            #SETTING_CODE
+            break;
+        }"
+    )
+    .replace("#CASE", &format!("{}::Which::{}", &idiomatic_class, &f.name().to_upper_camel_case(&[])))
+    .replace("#SETTING_CODE", &setting_code.replace("\n", "\n    "))
+}
+
+fn codegen_union(ctx: &Context, u: &ast::UnnamedUnion, idiomatic_class: &String) -> String {
+    indoc!(
+        "switch (src.which()) {
+            #FIELDS
+        }"
+    )
+    .replace(
+        "#FIELDS",
+        &u.fields()
+            .iter()
+            .map(|f| codegen_union_field_setter(ctx, f, idiomatic_class))
+            .collect::<Vec<String>>()
+            .join("\n")
+            .replace("\n", "\n    ")
+    )
+}
 
 fn codegen_field_setter(ctx: &Context, f: &ast::Field) -> String {
     match f.cpp_type() {
@@ -29,7 +72,29 @@ fn codegen_field_setter(ctx: &Context, f: &ast::Field) -> String {
 fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
     let idiomatic_class = format!("{}::{}", ctx.current_namespace().to_string(), c.name().to_string());
 
-    vec!(
+    let mut fields = vec!();
+    fields.extend(
+        c.fields()
+            .iter()
+            .filter(|f| match c.union() { Some(_) => f.name().to_string() != String::from("which"), None => true })
+            .map(|f| codegen_field_setter(ctx, f))
+    );
+    if let Some(u) = c.union() {
+        fields.push(codegen_union(ctx, u, &idiomatic_class))
+    }
+
+    let mut defs = vec!();
+    for def in c.inner_types() {
+        let child_defs =
+            match def {
+                ast::ComplexTypeDef::EnumClass(child) => codegen_enum(&ctx.with_child_namespace(c.name()), child),
+                ast::ComplexTypeDef::Class(child) => codegen_class(&ctx.with_child_namespace(c.name()), child)
+            };
+
+        defs.extend(child_defs);
+    }
+
+    defs.push(
         indoc!("
         void serialize(#CAPNP_CLASS::Builder builder, const #IDIOMATIC_CLASS& src) {
             #FIELDS
@@ -38,21 +103,28 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
             .replace("#IDIOMATIC_CLASS", &idiomatic_class)
             .replace(
                 "#FIELDS",
-                &c.fields()
-                    .iter()
-                    .filter(|f| match c.union() { Some(_) => f.name().to_string() != String::from("which"), None => true })
-                    .map(|f| codegen_field_setter(ctx, f))
-                    .collect::<Vec<String>>()
+                &fields
                     .join("\n")
                     .replace("\n", "\n    ")
-            ),
+            )
+    );
+    defs.push(
         String::from("#IDIOMATIC_CLASS deserialize(const #CAPNP_CLASS::Reader&) {}")
             .replace("#CAPNP_CLASS", &ctx.capnp_names().get(c.id()).unwrap().to_string())
             .replace("#IDIOMATIC_CLASS", &idiomatic_class),
-    )
+    );
+    defs
 }
 
 fn codegen_enum(ctx: &Context, e: &ast::EnumClass) -> Vec<String> {
+    if e.name().to_string() == "Which" {
+        return vec!();
+    }
+
+    if let None = ctx.capnp_names().get(e.id()) {
+        println!("ERROR: Unable to find name for: {}", e.id());
+    }
+
     vec!(
         String::from("void serialize(#ENUM);")
             .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string()),

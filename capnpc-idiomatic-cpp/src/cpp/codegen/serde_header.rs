@@ -1,21 +1,43 @@
 use indoc::indoc;
 use super::*;
 
-
 fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
     let idiomatic_class = format!("{}::{}", ctx.current_namespace().to_string(), c.name().to_string());
 
-    vec!(
+    let mut defs = vec!();
+
+    for def in c.inner_types() {
+        let child_defs =
+            match def {
+                ast::ComplexTypeDef::EnumClass(child) => codegen_enum(&ctx.with_child_namespace(c.name()), child),
+                ast::ComplexTypeDef::Class(child) => codegen_class(&ctx.with_child_namespace(c.name()), child)
+            };
+
+        defs.extend(child_defs);
+    }
+
+    defs.push(
         String::from("void serialize(#CAPNP_CLASS::Builder, const #IDIOMATIC_CLASS&);")
             .replace("#CAPNP_CLASS", &ctx.capnp_names().get(c.id()).unwrap().to_string())
-            .replace("#IDIOMATIC_CLASS", &idiomatic_class),
+            .replace("#IDIOMATIC_CLASS", &idiomatic_class)
+    );
+    defs.push(
         String::from("#IDIOMATIC_CLASS deserialize(const #CAPNP_CLASS::Reader&);")
             .replace("#CAPNP_CLASS", &ctx.capnp_names().get(c.id()).unwrap().to_string())
             .replace("#IDIOMATIC_CLASS", &idiomatic_class),
-    )
+    );
+    return defs;
 }
 
 fn codegen_enum(ctx: &Context, e: &ast::EnumClass) -> Vec<String> {
+    if e.name().to_string() == "Which" {
+        return vec!();
+    }
+
+    if let None = ctx.capnp_names().get(e.id()) {
+        println!("ERROR: Unable to find name for: {}", e.id());
+    }
+
     vec!(
         String::from("void serialize(#ENUM);")
             .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string()),

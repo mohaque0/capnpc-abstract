@@ -109,9 +109,18 @@ impl Context {
         }
     }
 
-    fn set_capnp_names_for_child_nodes(&mut self, fqn: &FullyQualifiedName, node: &parser::ast::Node) {
-        let name = self.names().get(&node.id()).expect(&format!("Unable to find name for node: {}", node.id())).clone();
-        self.capnp_names.insert(node.id(), fqn.with_appended(&name));
+    fn set_capnp_names_for_child_nodes(&mut self, parent_fqn: &FullyQualifiedName, node: &parser::ast::Node) {
+        let fqn =
+            if node.which() == &parser::ast::node::Which::File {
+                parent_fqn.clone()
+            } else {
+                let name = self.names().get(&node.id()).expect(&format!("Unable to find name for node: {}", node.id())).clone();
+                parent_fqn.with_appended(&name)
+            };
+
+        self.capnp_names.insert(node.id(), fqn.clone());
+
+        println!("Capnp Name: {} {}", node.id(), self.capnp_names().get(&node.id()).unwrap().to_string());
 
         let child_ids = self.children.get_vec(&node.id())
             .unwrap_or(&vec!())
