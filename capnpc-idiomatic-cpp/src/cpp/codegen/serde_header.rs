@@ -41,11 +41,12 @@ fn codegen_enum(ctx: &Context, e: &ast::EnumClass) -> Vec<String> {
     let idiomatic_class = format!("{}::{}", ctx.current_namespace().to_string(), e.name().to_string());
 
     vec!(
-        String::from("#ENUM serialize(#IDIOMATIC_CLASS);")
-            .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string())
-            .replace("#IDIOMATIC_CLASS", &idiomatic_class),
-        String::from("void deserialize(#ENUM);")
-            .replace("#ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string()),
+        String::from("#CAPNP_ENUM serialize(#IDIOMATIC_ENUM);")
+            .replace("#CAPNP_ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string())
+            .replace("#IDIOMATIC_ENUM", &idiomatic_class),
+        String::from("#IDIOMATIC_ENUM deserialize(#CAPNP_ENUM);")
+            .replace("#CAPNP_ENUM", &ctx.capnp_names().get(e.id()).unwrap().to_string())
+            .replace("#IDIOMATIC_ENUM", &idiomatic_class),
     )
 }
 
