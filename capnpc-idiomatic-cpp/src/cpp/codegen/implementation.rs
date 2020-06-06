@@ -198,6 +198,9 @@ fn codegen_field_accessors(ctx: &Context, c: &ast::Class) -> Vec<String> {
 
 fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
     let mut defs = vec!();
+    for inner_type in c.inner_types() {
+        defs.extend(codegen_complex_type_def(&ctx.with_child_namespace(c.name()), inner_type));
+    }
     defs.extend(codegen_constructors(ctx, c));
     defs.extend(codegen_field_accessors(ctx, c));
     return defs;
@@ -205,6 +208,13 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
 
 fn codegen_enum(_ctx: &Context, _c: &ast::EnumClass) -> Vec<String> {
     vec!()
+}
+
+fn codegen_complex_type_def(ctx: &Context, def: &ast::ComplexTypeDef) -> Vec<String> {
+    match def {
+        ast::ComplexTypeDef::EnumClass(c) => codegen_enum(ctx, c),
+        ast::ComplexTypeDef::Class(c) => codegen_class(ctx, c)
+    }
 }
 
 fn codegen_namespace_contents(ctx: &Context, namespace: &ast::Namespace) -> Vec<String> {
@@ -220,13 +230,7 @@ fn codegen_namespace_contents(ctx: &Context, namespace: &ast::Namespace) -> Vec<
     }
 
     for def in namespace.defs() {
-        let child_defs =
-            match def {
-                ast::ComplexTypeDef::EnumClass(c) => codegen_enum(ctx, c),
-                ast::ComplexTypeDef::Class(c) => codegen_class(ctx, c)
-            };
-
-        defs.extend(child_defs);
+        defs.extend(codegen_complex_type_def(ctx, def));
     }
 
     return defs;
