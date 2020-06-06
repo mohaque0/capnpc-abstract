@@ -74,6 +74,22 @@ fn codegen_union_field_setter(ctx: &Context, f: &ast::Field, idiomatic_class: &S
     .replace("#SETTING_CODE", &setting_code.replace("\n", "\n    "))
 }
 
+fn codegen_union_field_constructor(ctx: &Context, f: &ast::Field, idiomatic_class: &String, capnp_class: &String) -> String {
+    indoc!(
+        "case #CAPNP_CLASS::Which::#CAPNP_ENUMERANT: {
+            return #IDIOMATIC_CLASS(
+                #IDIOMATIC_ENUMERANT,
+                #FIELD_DESERIALIZER
+            );
+        }"
+    )
+    .replace("#IDIOMATIC_CLASS", &idiomatic_class)
+    .replace("#IDIOMATIC_ENUMERANT", &format!("{}::Which::{}", &idiomatic_class, &f.name().to_upper_camel_case(&[])))
+    .replace("#CAPNP_CLASS", &capnp_class)
+    .replace("#CAPNP_ENUMERANT", &f.name().to_screaming_snake_case(&[]))
+    .replace("#FIELD_DESERIALIZER", &codegen_field_getter(ctx, f))
+}
+
 fn codegen_union_serialization(ctx: &Context, u: &ast::UnnamedUnion, idiomatic_class: &String) -> String {
     indoc!(
         "switch (src.which()) {
@@ -85,6 +101,36 @@ fn codegen_union_serialization(ctx: &Context, u: &ast::UnnamedUnion, idiomatic_c
         &u.fields()
             .iter()
             .map(|f| codegen_union_field_setter(ctx, f, idiomatic_class))
+            .collect::<Vec<String>>()
+            .join("\n")
+            .replace("\n", "\n    ")
+    )
+}
+
+fn codegen_union_deserialization(
+    ctx: &Context,
+    u: &ast::UnnamedUnion,
+    vector_deserialization_code: &Vec<String>,
+    idiomatic_class: &String,
+    capnp_class:& String
+) -> String {
+    indoc!(
+        "#VECTOR_DESERIALIZERS
+        switch (src.which()) {
+            #FIELDS
+        }"
+    )
+    .replace(
+        "#VECTOR_DESERIALIZERS",
+        &vector_deserialization_code
+            .join("\n")
+            //.replace("\n", "\n    ")
+    )
+    .replace(
+        "#FIELDS",
+        &u.fields()
+            .iter()
+            .map(|f| codegen_union_field_constructor(ctx, f, idiomatic_class, capnp_class))
             .collect::<Vec<String>>()
             .join("\n")
             .replace("\n", "\n    ")
@@ -157,6 +203,47 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
                 _ => vec!()
             })
     );
+    let deserialization_body =
+        if let Some(u) = c.union() {
+            vector_deserialization_code.extend(
+                u.fields()
+                .iter()
+                .flat_map(|f| match f.cpp_type() {
+                    ast::CppType::Vector(inner_type) => vec!(codegen_vector_field_deserialization(ctx, f, &**inner_type)),
+                    _ => vec!()
+                })
+            );
+            codegen_union_deserialization(
+                ctx,
+                u, 
+                &vector_deserialization_code,
+                &idiomatic_class,
+                &ctx.capnp_names().get(c.id()).unwrap().to_string()
+            )
+        } else {
+            indoc!("
+                #VECTOR_DESERIALIZERS
+                return #IDIOMATIC_CLASS(
+                    #FIELDS
+                );")
+                .replace("#CAPNP_CLASS", &ctx.capnp_names().get(c.id()).unwrap().to_string())
+                .replace("#IDIOMATIC_CLASS", &idiomatic_class)
+                .replace(
+                    "#VECTOR_DESERIALIZERS",
+                    &vector_deserialization_code
+                        .join("\n")
+                        .replace("\n", "\n    ")
+                )
+                .replace(
+                    "#FIELDS",
+                    &c.fields()
+                        .iter()
+                        .map(|f| codegen_field_getter(ctx, f))
+                        .collect::<Vec<String>>()
+                        .join(",\n")
+                        .replace("\n", "\n        ")
+                )
+        };
 
     // Handle inner types.
     let mut defs = vec!();
@@ -188,28 +275,11 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
     defs.push(
         indoc!("
         #IDIOMATIC_CLASS deserialize(const #CAPNP_CLASS::Reader& src) {
-            #VECTOR_DESERIALIZERS
-            return #IDIOMATIC_CLASS(
-                #FIELDS
-            );
+            #DESERIALIZATION_BODY
         }")
-            .replace("#CAPNP_CLASS", &ctx.capnp_names().get(c.id()).unwrap().to_string())
-            .replace("#IDIOMATIC_CLASS", &idiomatic_class)
-            .replace(
-                "#VECTOR_DESERIALIZERS",
-                &vector_deserialization_code
-                    .join("\n")
-                    .replace("\n", "\n    ")
-            )
-            .replace(
-                "#FIELDS",
-                &c.fields()
-                    .iter()
-                    .map(|f| codegen_field_getter(ctx, f))
-                    .collect::<Vec<String>>()
-                    .join(",\n")
-                    .replace("\n", "\n        ")
-            ),
+        .replace("#CAPNP_CLASS", &ctx.capnp_names().get(c.id()).unwrap().to_string())
+        .replace("#IDIOMATIC_CLASS", &idiomatic_class)
+        .replace("#DESERIALIZATION_BODY", &deserialization_body.replace("\n", "\n    ")),
     );
     defs
 }
@@ -295,6 +365,8 @@ fn codegen_namespace_contents(ctx: &Context, namespace: &ast::Namespace) -> Vec<
 
         defs.extend(child_defs);
     }
+
+    defs.sort();
 
     return defs;
 }

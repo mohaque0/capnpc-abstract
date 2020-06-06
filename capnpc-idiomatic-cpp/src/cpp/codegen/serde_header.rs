@@ -72,6 +72,8 @@ fn codegen_namespace_contents(ctx: &Context, namespace: &ast::Namespace) -> Vec<
         defs.extend(child_defs);
     }
 
+    defs.sort();
+
     return defs;
 }
 
