@@ -233,6 +233,8 @@ fn codegen_namespace_contents(ctx: &Context, namespace: &ast::Namespace) -> Vec<
         defs.extend(codegen_complex_type_def(ctx, def));
     }
 
+    defs.sort();
+
     return defs;
 }
 
