@@ -90,6 +90,17 @@ impl Context {
     }
 }
 
+fn is_enum_class(ctx: &Context, t: &ast::CppType) -> bool {
+    match t {
+        ast::CppType::RefId(id) => {
+            match ctx.type_info().get(id).unwrap().cpp_type() {
+                ast::ComplexTypeDef::EnumClass(_) => true,
+                _ => false
+            }
+        },
+        _ => false
+    }
+}
 
 fn is_complex_cpp_type(t: &ast::CppType) -> bool {
     match t {
@@ -131,7 +142,7 @@ fn codegen_type_as_ref_if_complex(ctx: &Context, t: &ast::CppType) -> String {
 
 fn codegen_type_as_rvalue_ref_if_complex(ctx: &Context, t: &ast::CppType) -> String {
     let base_type = codegen_cpp_type(ctx, t);
-    if is_complex_cpp_type(t) {
+    if is_complex_cpp_type(t) && !is_enum_class(ctx, t) {
         format!("{}&&", base_type)
     } else {
         base_type

@@ -30,6 +30,16 @@ fn codegen_move_constructor_assign(f: &ast::Field) -> String {
     }
 }
 
+fn codegen_clone_field(f: &ast::Field) -> String {
+    match f.cpp_type() {
+        ast::CppType::String => format!("_#NAME.clone()"),
+        ast::CppType::Vector(_) => format!("std::move(#NAME)"),
+        ast::CppType::RefId(_) => format!("_#NAME.clone()"),
+        _ => format!("_#NAME")
+    }
+    .replace("#NAME", &f.name().to_string())
+}
+
 fn codegen_field_setter_assign(f: &ast::Field) -> String {
     if is_complex_cpp_type(&f.cpp_type()) {
         format!("_#NAME = std::move(val)").replace("#NAME", &f.name().to_string())
@@ -99,6 +109,150 @@ fn codegen_destructor(ctx: &Context, c: &ast::Class) -> String {
     format!("{}::~{}() {{}}", ctx.current_namespace().with_appended(c.name()).to_string(), c.name().to_string())
 }
 
+fn codegen_clone_vector_field(ctx: &Context, f: &ast::Field, element_type: &ast::CppType, field_ref: &String) -> String {
+    let clone_element =
+        if is_complex_cpp_type(&element_type) && !is_enum_class(ctx, &element_type) {
+            format!("i->clone()")
+        } else {
+            format!("*i")
+        };
+
+    indoc!(
+        "std::vector<#TYPE> #NAME;
+        for (auto i = #FIELD_REF.begin(); i < #FIELD_REF.end(); i++) {
+            #NAME.push_back(#CLONE_ELEMENT);
+        }"
+    )
+    .replace("#NAME", &f.name().to_string())
+    .replace("#TYPE", &codegen_cpp_type(ctx, element_type))
+    .replace("#FIELD_REF", &field_ref)
+    .replace("#CLONE_ELEMENT", &clone_element)
+}
+
+fn codegen_clone_union_case(ctx: &Context, c: &ast::Class, f: &ast::Field) -> String {
+    let idiomatic_class = format!("{}::{}", ctx.current_namespace().to_string(), c.name().to_string());
+
+    let conversion =
+        match f.cpp_type() {
+            ast::CppType::String => format!("this->#AS_CONVERSION().clone()"),
+            // NOTE: In this case the vector is cloned earlier with the variable name the same as the field name.
+            ast::CppType::Vector(_) => format!("std::move({})", f.name().to_lower_camel_case(&[])),
+            ast::CppType::RefId(_) =>
+                if is_enum_class(ctx, f.cpp_type()) {
+                    format!("this->#AS_CONVERSION()")
+                } else {
+                    format!("this->#AS_CONVERSION().clone()")
+                },
+            _ => format!("this->#AS_CONVERSION()")
+        }
+        .replace("#AS_CONVERSION", &f.name().with_prepended("as").to_lower_camel_case(&[]));
+    
+    let vector_field_clone =
+        match f.cpp_type() {
+            ast::CppType::Vector(t) => 
+                codegen_clone_vector_field(
+                    ctx,
+                    f,
+                    t,
+                    &format!("this->{}()", &f.name().with_prepended("as").to_lower_camel_case(&[]))
+                ),
+            _ => String::new()
+        };
+
+    indoc!(
+        "case #IDIOMATIC_CLASS::Which::#ENUMERANT: {
+            #VECTOR_FIELD_CLONE
+            return #IDIOMATIC_CLASS(
+                _which,
+                #AS_CONVERSION
+            );
+        }"
+    )
+    .replace("#IDIOMATIC_CLASS", &idiomatic_class)
+    .replace("#ENUMERANT", &f.name().to_upper_camel_case(&[]))
+    .replace("#VECTOR_FIELD_CLONE", &vector_field_clone.replace("\n", "\n    "))
+    .replace("#AS_CONVERSION", &conversion)
+}
+
+fn codegen_clone_union(ctx: &Context, c: &ast::Class, u: &ast::UnnamedUnion) -> String {
+    let cases =
+        u.fields()
+            .iter()
+            .map(|f| codegen_clone_union_case(ctx, c, f))
+            .collect::<Vec<String>>();
+
+    indoc!(
+        "switch(_which) {
+            #CASES
+        }"
+    )
+    .replace("#CASES", &cases.join("\n").replace("\n", "\n    "))
+}
+
+fn codegen_clone(ctx: &Context, c: &ast::Class) -> String {
+    let mut vector_field_clones = vec!();
+    vector_field_clones.extend(
+        c.fields()
+            .iter()
+            .flat_map(|f| match f.cpp_type() {
+                ast::CppType::Vector(inner_type) => vec!(
+                    codegen_clone_vector_field(
+                        ctx,
+                        f,
+                        &**inner_type,
+                        &format!("_{}", f.name().to_lower_camel_case(&[]))
+                    )
+                ),
+                _ => vec!()
+            })
+    );
+
+    let mut field_clones =
+        c.fields()
+            .iter()
+            .filter(|f| match c.union() { Some(_) => f.name().to_string() != String::from("which"), None => true })
+            .map(codegen_clone_field)
+            .collect::<Vec<String>>();
+
+    if let Some(_) = c.union() {
+        field_clones.push(String::from("std::move(whichData)"));
+    }
+
+    let return_code =
+        match c.union() {
+            Some(u) => codegen_clone_union(ctx, c, u),
+            None =>
+                indoc!(
+                    "return #TYPE(
+                        #FIELDS
+                    );"
+                )
+                .replace("#TYPE", &ctx.current_namespace().with_appended(c.name()).to_string())
+                .replace(
+                    "#FIELDS",
+                    &field_clones.join(",\n    ")
+                )
+        };
+
+    indoc!(
+        "#TYPE #TYPE::clone() const {
+            #VECTOR_FIELD_CLONES
+            #RETURN_CODE
+        }"
+    )
+    .replace("#TYPE", &ctx.current_namespace().with_appended(c.name()).to_string())
+    .replace("#NAME", &c.name().to_string())
+    .replace(
+        "#VECTOR_FIELD_CLONES",
+        &vector_field_clones.join("\n    ").replace("\n", "\n    ")
+    )
+    .replace(
+        "#RETURN_CODE",
+        &return_code.replace("\n", "\n    ")
+    )
+    
+}
+
 fn codegen_constructors(ctx: &Context, c: &ast::Class) -> Vec<String> {
     let mut ret = vec!();
 
@@ -118,6 +272,7 @@ fn codegen_constructors(ctx: &Context, c: &ast::Class) -> Vec<String> {
     ret.push(codegen_move_constructor(ctx, c));
     ret.push(codegen_destructor(ctx, c));
     ret.push(codegen_move_assignment_operator(ctx, c));
+    ret.push(codegen_clone(ctx, c));
     return ret;
 }
 

@@ -57,9 +57,9 @@ fn codegen_union_setter_prototypes(ctx: &Context, class_name: &ast::Name, u_opti
             u.fields()
                 .iter()
                 .map(|f| {
-                    indoc!("#CLASS& #SETTER(#TYPE&& val);")
+                    indoc!("#CLASS& #SETTER(#TYPE val);")
                     .replace("#CLASS", &class_name.to_string())
-                    .replace("#TYPE", &codegen_cpp_type(ctx, f.cpp_type()))
+                    .replace("#TYPE", &codegen_type_as_rvalue_ref_if_complex(ctx, f.cpp_type()))
                     .replace("#SETTER", &f.name().with_prepended("as").with_prepended("set").to_lower_camel_case(&[]))
                 })
                 .collect()
@@ -120,6 +120,7 @@ fn codegen_constructor_prototypes(ctx: &Context, c: &ast::Class) -> Vec<String> 
     ret.push(format!("#NAME(#NAME&& other);").replace("#NAME", &c.name().to_string()));
     ret.push(format!("#NAME& operator=(#NAME&& other);").replace("#NAME", &c.name().to_string()));
     ret.push(format!("~{}();", c.name().to_string()));
+    ret.push(format!("#NAME clone() const;").replace("#NAME", &c.name().to_string()));
     return ret;
 }
 
