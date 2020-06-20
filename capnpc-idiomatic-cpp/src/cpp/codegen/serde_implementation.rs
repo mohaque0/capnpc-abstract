@@ -1,18 +1,6 @@
 use indoc::indoc;
 use super::*;
 
-fn stringify_iter(i: &mut dyn Iterator<Item = String>) -> String {
-    i.collect::<Vec<String>>()
-    .join("\n")
-    .replace("\n", "\n    ")
-    .to_string()
-}
-
-//fn cpp_type_to_capnp_string(ctx: &Context, cpp_type: &ast::CppType) {
-//    match cpp_type {
-//
-//    }
-//}
 
 /**
  * Expects the following to be replaced in the resulting String:
@@ -75,19 +63,34 @@ fn codegen_union_field_setter(ctx: &Context, f: &ast::Field, idiomatic_class: &S
 }
 
 fn codegen_union_field_constructor(ctx: &Context, f: &ast::Field, idiomatic_class: &String, capnp_class: &String) -> String {
-    indoc!(
-        "case #CAPNP_CLASS::Which::#CAPNP_ENUMERANT: {
-            return #IDIOMATIC_CLASS(
+    let mut stages = vec!();
+
+    if let ast::CppType::Vector(inner_type) = f.cpp_type() {
+        stages.push(
+            codegen_vector_field_deserialization(ctx, f, inner_type)
+        );
+    }
+
+    stages.push(
+        indoc!(
+            "return #IDIOMATIC_CLASS(
                 #IDIOMATIC_ENUMERANT,
                 #FIELD_DESERIALIZER
-            );
+            );"
+        )
+        .replace("#IDIOMATIC_CLASS", &idiomatic_class)
+        .replace("#IDIOMATIC_ENUMERANT", &format!("{}::Which::{}", &idiomatic_class, &f.name().to_upper_camel_case(&[])))
+        .replace("#FIELD_DESERIALIZER", &codegen_field_getter(f))
+    );
+
+    indoc!(
+        "case #CAPNP_CLASS::Which::#CAPNP_ENUMERANT: {
+            #STAGES
         }"
     )
-    .replace("#IDIOMATIC_CLASS", &idiomatic_class)
-    .replace("#IDIOMATIC_ENUMERANT", &format!("{}::Which::{}", &idiomatic_class, &f.name().to_upper_camel_case(&[])))
     .replace("#CAPNP_CLASS", &capnp_class)
     .replace("#CAPNP_ENUMERANT", &f.name().to_screaming_snake_case(&[]))
-    .replace("#FIELD_DESERIALIZER", &codegen_field_getter(ctx, f))
+    .replace("#STAGES", &stages.join("\n").replace("\n", "\n    "))
 }
 
 fn codegen_union_serialization(ctx: &Context, u: &ast::UnnamedUnion, idiomatic_class: &String) -> String {
@@ -110,21 +113,13 @@ fn codegen_union_serialization(ctx: &Context, u: &ast::UnnamedUnion, idiomatic_c
 fn codegen_union_deserialization(
     ctx: &Context,
     u: &ast::UnnamedUnion,
-    vector_deserialization_code: &Vec<String>,
     idiomatic_class: &String,
     capnp_class:& String
 ) -> String {
     indoc!(
-        "#VECTOR_DESERIALIZERS
-        switch (src.which()) {
+        "switch (src.which()) {
             #FIELDS
         }"
-    )
-    .replace(
-        "#VECTOR_DESERIALIZERS",
-        &vector_deserialization_code
-            .join("\n")
-            //.replace("\n", "\n    ")
     )
     .replace(
         "#FIELDS",
@@ -167,7 +162,7 @@ fn codegen_vector_field_deserialization(ctx: &Context, f: &ast::Field, element_t
     .replace("#DESERIALIZE_INNER_TYPE", &codegen_vector_field_element_deserialization(f, element_type))
 }
 
-fn codegen_field_getter(ctx: &Context, f: &ast::Field) -> String {
+fn codegen_field_getter(f: &ast::Field) -> String {
     match f.cpp_type() {
         ast::CppType::Vector(_) => indoc!("std::move(#FIELD_NAME)"),
         ast::CppType::RefId(_) => indoc!("deserialize(src.#GET_FIELD_METHOD())"),
@@ -205,18 +200,9 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
     );
     let deserialization_body =
         if let Some(u) = c.union() {
-            vector_deserialization_code.extend(
-                u.fields()
-                .iter()
-                .flat_map(|f| match f.cpp_type() {
-                    ast::CppType::Vector(inner_type) => vec!(codegen_vector_field_deserialization(ctx, f, &**inner_type)),
-                    _ => vec!()
-                })
-            );
             codegen_union_deserialization(
                 ctx,
                 u, 
-                &vector_deserialization_code,
                 &idiomatic_class,
                 &ctx.capnp_names().get(c.id()).unwrap().to_string()
             )
@@ -232,16 +218,15 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
                     "#VECTOR_DESERIALIZERS",
                     &vector_deserialization_code
                         .join("\n")
-                        .replace("\n", "\n    ")
                 )
                 .replace(
                     "#FIELDS",
                     &c.fields()
                         .iter()
-                        .map(|f| codegen_field_getter(ctx, f))
+                        .map(|f| codegen_field_getter(f))
                         .collect::<Vec<String>>()
                         .join(",\n")
-                        .replace("\n", "\n        ")
+                        .replace("\n", "\n    ")
                 )
         };
 
