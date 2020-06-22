@@ -295,7 +295,7 @@ fn codegen_field_setter(ctx: &Context, c: &ast::Class, f: &ast::Field) -> String
         return *this;
     }
     ")
-    .replace("#TYPE", &codegen_type_as_ref_if_complex(ctx, f.cpp_type()))
+    .replace("#TYPE", &codegen_type_as_rvalue_ref_if_complex(ctx, f.cpp_type()))
     .replace("#NAMESPACE", &ctx.current_namespace().to_string())
     .replace("#CLASS_NAME", &c.name().to_string())
     .replace("#FIELD_ASSIGNMENT", &codegen_field_setter_assign(f))

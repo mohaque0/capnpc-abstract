@@ -30,7 +30,7 @@ fn codegen_field_getter_prototype(ctx: &Context, f: &ast::Field) -> String {
 
 fn codegen_field_setter_prototype(ctx: &Context, class_name: &ast::Name, f: &ast::Field) -> String {
     indoc!("#CLASS& #SETTER(#TYPE val);")
-    .replace("#TYPE", &codegen_type_as_ref_if_complex(ctx, f.cpp_type()))
+    .replace("#TYPE", &codegen_type_as_rvalue_ref_if_complex(ctx, f.cpp_type()))
     .replace("#CLASS", &class_name.to_string())
     .replace("#SETTER", &f.name().to_lower_camel_case(&[]))
 }
