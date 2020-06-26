@@ -30,11 +30,16 @@ fn codegen_move_constructor_assign(f: &ast::Field) -> String {
     }
 }
 
-fn codegen_clone_field(f: &ast::Field) -> String {
+fn codegen_clone_field(ctx: &Context, f: &ast::Field) -> String {
     match f.cpp_type() {
         ast::CppType::String => format!("_#NAME.clone()"),
         ast::CppType::Vector(_) => format!("std::move(#NAME)"),
-        ast::CppType::RefId(_) => format!("_#NAME.clone()"),
+        ast::CppType::RefId(id) =>
+            if is_enum_class(ctx, f.cpp_type()) {
+                format!("_#NAME")
+            } else {
+                format!("_#NAME.clone()")
+            },
         _ => format!("_#NAME")
     }
     .replace("#NAME", &f.name().to_string())
@@ -211,7 +216,7 @@ fn codegen_clone(ctx: &Context, c: &ast::Class) -> String {
         c.fields()
             .iter()
             .filter(|f| match c.union() { Some(_) => f.name().to_string() != String::from("which"), None => true })
-            .map(codegen_clone_field)
+            .map(|f| codegen_clone_field(ctx, f))
             .collect::<Vec<String>>();
 
     if let Some(_) = c.union() {
