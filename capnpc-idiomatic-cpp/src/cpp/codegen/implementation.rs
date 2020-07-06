@@ -32,7 +32,7 @@ fn codegen_move_constructor_assign(f: &ast::Field) -> String {
 
 fn codegen_clone_field(ctx: &Context, f: &ast::Field) -> String {
     match f.cpp_type() {
-        ast::CppType::String => format!("_#NAME.clone()"),
+        ast::CppType::String => format!("std::string(_#NAME)"),
         ast::CppType::Vector(_) => format!("std::move(#NAME)"),
         ast::CppType::RefId(id) =>
             if is_enum_class(ctx, f.cpp_type()) {

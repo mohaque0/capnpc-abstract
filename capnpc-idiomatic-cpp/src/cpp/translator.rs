@@ -340,6 +340,7 @@ fn generate_imports(cgr: &CodeGeneratorRequest) -> Vec<Import> {
         .map(|filename| format!("{}{}", filename, ".h"))
         .map(|filename| Import::new(filename))
         .collect();
+    imports.push(Import::new(String::from("string")));
     imports.push(Import::new(String::from("variant")));
     imports.push(Import::new(String::from("vector")));
     return imports;
