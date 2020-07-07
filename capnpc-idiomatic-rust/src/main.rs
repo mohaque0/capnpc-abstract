@@ -20,7 +20,9 @@ fn get_output_dir() -> PathBuf {
 }
 
 fn get_output_file() -> Result<File, Error> {
-    File::create(get_output_dir().with_file_name("lib.rs"))
+    let mut out_dir = get_output_dir();
+    out_dir.push("lib.rs");
+    File::create(out_dir)
 }
 
 fn main() -> Result<(), Error> {
