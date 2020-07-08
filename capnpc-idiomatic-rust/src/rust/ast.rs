@@ -1136,6 +1136,7 @@ impl ToCode for Impl {
                     .replace("#FIELD_NAME", f.name.to_snake_case(RESERVED).as_str())
                     .replace("#TGT_TYPE", t.to_code().as_str())
                 ,
+                Type::String => format!("src.get_{}()?.to_string()", f.name.to_snake_case(RESERVED)),
                 Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
                 Type::RefName(name, _) => {
                     let field_name = f.name.to_snake_case(RESERVED);
@@ -1318,6 +1319,12 @@ impl ToCode for Impl {
                         if e.enum_origin() == EnumOrigin::WhichForPartialUnion {
                             return format!(
                                 "self.{}().write_to(&mut dst.reborrow());",
+                                f.name.to_snake_case(RESERVED)
+                            )
+                        } else {
+                            return format!(
+                                "dst.reborrow().{}(self.{}().convert());",
+                                f.name.with_prepended("set").to_snake_case(RESERVED),
                                 f.name.to_snake_case(RESERVED)
                             )
                         }
