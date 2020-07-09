@@ -1514,6 +1514,6 @@ impl ToCode for RustAst {
             .collect::<Vec<String>>()
             .join("\n\n");
 
-        return format!("{}\n\n{}\n\n{}", external_crate_decls, external_mod_decls, modules);
+        return format!("#![allow(unused_imports)]\n\n{}\n\n{}\n\n{}", external_crate_decls, external_mod_decls, modules);
     }
 }
