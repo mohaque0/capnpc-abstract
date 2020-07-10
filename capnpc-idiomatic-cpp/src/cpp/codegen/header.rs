@@ -230,7 +230,7 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> String {
         #SECTIONS
         };
     ")
-    .replace("#NAME", &c.name().to_upper_camel_case(&[]))
+    .replace("#NAME", &c.name().to_string())
     .replace(
         "#SECTIONS",
         &class_sections.join("\n")
