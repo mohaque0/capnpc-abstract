@@ -1124,18 +1124,32 @@ impl ToCode for Impl {
         fn get_field_reader(f: &Field) -> String {
             return match f.rust_type() {
                 Type::Unit => panic!("Unsupported type for struct field: Unit"),
-                Type::List(t) => indoc!(
+                Type::List(t) => {
+                    let needs_result_unwrap =
+                        match &**t {
+                            Type::RefName(_, typedef) => typedef.is_simple_enum(),
+                            _ => false
+                        };
+                    let iter_item_deref =
+                        if needs_result_unwrap {
+                            "&i?"
+                        } else {
+                            "&i"
+                        };
+
+                    indoc!(
                         "{
                             let mut items : Vec<#TGT_TYPE> = vec!();
                             for i in src.get_#FIELD_NAME()?.iter() {
-                                items.push(#TGT_TYPE::read_from(&i)?);
+                                items.push(#TGT_TYPE::read_from(#ITER_ITEM_DEREF)?);
                             };
                             items
                         }"
                     )
+                    .replace("#ITER_ITEM_DEREF", iter_item_deref)
                     .replace("#FIELD_NAME", f.name.to_snake_case(RESERVED).as_str())
                     .replace("#TGT_TYPE", t.to_code().as_str())
-                ,
+                },
                 Type::String => format!("src.get_{}()?.to_string()", f.name.to_snake_case(RESERVED)),
                 Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
                 Type::RefName(name, _) => {
@@ -1196,6 +1210,57 @@ impl ToCode for Impl {
         // Writing Functions
         //
 
+        fn list_inner_type_conversion(t: &Type, src_list: &str, init_function_name: &str) -> String {
+            match t {
+                Type::List(_) => panic!("Not supported."),
+                Type::RefId(_) => panic!("RefName should have been converted to RefId before this point."),
+                Type::RefName(_, typedef) =>
+                    if typedef.is_simple_enum() {
+                        indoc!(
+                            "{
+                                let mut dst_items = dst.reborrow().#INIT_FUNCTION_NAME(#SRC_LIST.len() as u32);
+                                let mut i = 0;
+                                for datum in #SRC_LIST {
+                                    let converted_datum = #DATA_TYPE::convert(&datum);
+                                    dst_items.set(i, converted_datum);
+                                    i = i + 1;
+                                }
+                            }"
+                        )
+                        .replace("#INIT_FUNCTION_NAME", &init_function_name)
+                        .replace("#SRC_LIST", &src_list)
+                        .replace("#DATA_TYPE", t.to_code().as_str())
+                    } else {
+                        indoc!(
+                            "{
+                                let mut items = dst.reborrow().#INIT_FUNCTION_NAME(#SRC_LIST.len() as u32);
+                                let mut i = 0;
+                                for src in #SRC_LIST {
+                                    src.write_to(&mut items.reborrow().get(i));
+                                    i = i + 1;
+                                };
+                            }"
+                        )
+                        .replace("#INIT_FUNCTION_NAME", &init_function_name)
+                        .replace("#SRC_LIST", &src_list)
+                        .replace("#DATA_TYPE", t.to_code().as_str())
+                    },
+                _ =>
+                    indoc!(
+                        "{
+                            let mut dst_items = dst.reborrow().#INIT_FUNCTION_NAME(#SRC_LIST.len() as u32);
+                            let mut i = 0;
+                            for datum in #SRC_LIST {
+                                dst_items.set(i, datum);
+                                i = i + 1;
+                            }
+                        }"
+                    )
+                    .replace("#INIT_FUNCTION_NAME", &init_function_name)
+                    .replace("#SRC_LIST", &src_list),
+            }
+        }
+
         fn enumerant_to_write_case(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
             return match &enumerant.rust_type() {
                 Type::Unit =>
@@ -1205,15 +1270,17 @@ impl ToCode for Impl {
                     .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
                 Type::List(t) => 
                     indoc!(
-                        "#IDIOMATIC_NAME::#ENUMERANT_NAME(data) => {
-                            let mut dst_items = dst.reborrow().#ENUMERANT_INIT_NAME(data.len() as u32);
-                            let mut i = 0;
-                            for datum in data {
-                                let converted_datum = #DATA_TYPE::convert(&datum);
-                                dst_items.set(i, converted_datum);
-                                i = i + 1;
-                            }
-                        }"
+                        "#IDIOMATIC_NAME::#ENUMERANT_NAME(data) =>
+                            #LIST_INNER_TYPE_CONVERSION
+                        "
+                    )
+                    .replace(
+                        "#LIST_INNER_TYPE_CONVERSION",
+                        &list_inner_type_conversion(
+                            &**t,
+                            "data",
+                            enumerant.name().with_prepended("init").to_snake_case(RESERVED).as_str()
+                        )
                     )
                     .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
                     .replace("#ENUMERANT_INIT_NAME", enumerant.name().with_prepended("init").to_snake_case(RESERVED).as_str())
@@ -1300,19 +1367,12 @@ impl ToCode for Impl {
         fn get_field_writer(f: &Field) -> String {
             return match f.rust_type() {
                 Type::Unit => panic!("Unsupported type for struct field: Unit"),
-                Type::List(t) => indoc!(
-                        "{
-                            let mut items = dst.reborrow().init_#FIELD_NAME(self.#FIELD_NAME().len() as u32);
-                            let mut i = 0;
-                            for src in self.#FIELD_NAME() {
-                                src.write_to(&mut items.reborrow().get(i));
-                                i = i + 1;
-                            };
-                        }"
-                    )
-                    .replace("#FIELD_NAME", f.name.to_snake_case(RESERVED).as_str())
-                    .replace("#TGT_TYPE", t.to_code().as_str())
-                ,
+                Type::List(t) => 
+                    list_inner_type_conversion(
+                        &*t,
+                        &format!("self.{}()", f.name.to_snake_case(RESERVED).as_str()),
+                        &format!("init_{}", f.name.to_snake_case(RESERVED).as_str())
+                    ),
                 Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
                 Type::RefName(_, type_def) => {
                     if let TypeDef::Enum(e) = type_def {
