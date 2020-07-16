@@ -855,7 +855,7 @@ impl RustAst {
 // Code generation
 //
 
-const RESERVED: &[&str] = &["Box", "box", "move"];
+const RESERVED: &[&str] = &["Box", "box", "move", "type"];
 
 pub trait ToCode {
     fn to_code(&self) -> String;
