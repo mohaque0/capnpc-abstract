@@ -855,7 +855,7 @@ impl RustAst {
 // Code generation
 //
 
-const RESERVED: &[&str] = &["Box", "box", "move", "type"];
+const RESERVED: &[&str] = &["box", "move", "type"];
 
 pub trait ToCode {
     fn to_code(&self) -> String;
@@ -1020,6 +1020,13 @@ impl ToCode for Impl {
                     .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
                     .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str())
                     .replace("#DATA_TYPE", (*t).to_code().as_str()),
+                Type::String =>
+                    indoc!(
+                        "Ok(#CAPNP_WHICH::#ENUMERANT_NAME(data)) => Ok(#IDIOMATIC_NAME::#ENUMERANT_NAME(data?.to_string()))"
+                    )
+                    .replace("#CAPNP_WHICH", capnp_enum_type.with(&Name::from(&String::from("Which"))).to_code().as_str())
+                    .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                    .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
                 Type::RefName(name, _) =>
                     indoc!(
                         "Ok(#CAPNP_WHICH::#ENUMERANT_NAME(data)) => {
@@ -1070,7 +1077,7 @@ impl ToCode for Impl {
             return indoc!(
                 "\tfn read_from(src: &#SRC_TYPE) -> Result<#TGT_TYPE, Error> {
                     match src.which() {
-                        #ENUMERANTS
+                        #ENUMERANTS,
                         Err(::capnp::NotInSchema(i)) => {
                             Err(::capnp::NotInSchema(i))?
                         }
@@ -1084,7 +1091,7 @@ impl ToCode for Impl {
                         .iter()
                         .map(|enumerant| enumerant_to_read_case(enumerant, e.capnp_type_name(), &idiomatic_type))
                         .collect::<Vec<String>>()
-                        .join("\n")
+                        .join(",\n")
                         .replace("\n", "\n\t\t")
                         .as_str()
                 )
@@ -1099,7 +1106,7 @@ impl ToCode for Impl {
             return indoc!(
                 "\tfn read_from(src: &#SRC_TYPE) -> Result<#TGT_TYPE, Error> {
                     match src.which() {
-                        #ENUMERANTS
+                        #ENUMERANTS,
                         Err(::capnp::NotInSchema(i)) => {
                             Err(::capnp::NotInSchema(i))?
                         }
@@ -1113,7 +1120,7 @@ impl ToCode for Impl {
                         .iter()
                         .map(|enumerant| enumerant_to_read_case(enumerant, e.capnp_type_name(), &idiomatic_type))
                         .collect::<Vec<String>>()
-                        .join("\n")
+                        .join(",\n")
                         .replace("\n", "\n\t\t")
                         .as_str()
                 )
@@ -1286,6 +1293,12 @@ impl ToCode for Impl {
                     .replace("#ENUMERANT_INIT_NAME", enumerant.name().with_prepended("init").to_snake_case(RESERVED).as_str())
                     .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str())
                     .replace("#DATA_TYPE", (*t).to_code().as_str()),
+                Type::String =>
+                    indoc!(
+                        "#IDIOMATIC_NAME::#ENUMERANT_NAME(data) => dst.reborrow().set_resource(data.as_str())"
+                    )
+                    .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                    .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
                 Type::RefName(_, typedef) =>
                     if typedef.is_simple_enum() {
                         indoc!(
