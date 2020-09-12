@@ -62,7 +62,7 @@ fn codegen_union_field_setter(ctx: &Context, f: &ast::Field, idiomatic_class: &S
     .replace("#SETTING_CODE", &setting_code.replace("\n", "\n    "))
 }
 
-fn codegen_union_field_constructor(ctx: &Context, f: &ast::Field, idiomatic_class: &String, capnp_class: &String) -> String {
+fn codegen_union_field_constructor(ctx: &Context, c: &ast::Class, f: &ast::Field, idiomatic_class: &String, capnp_class: &String) -> String {
     let mut stages = vec!();
 
     if let ast::CppType::Vector(inner_type) = f.cpp_type() {
@@ -71,16 +71,30 @@ fn codegen_union_field_constructor(ctx: &Context, f: &ast::Field, idiomatic_clas
         );
     }
 
+    let mut constructor_args = vec!();
+    constructor_args.append(
+        &mut c.fields()
+            .iter()
+            .filter(|f| f.name().to_string() != "which")
+            .map(|f| codegen_field_getter(f))
+            .collect::<Vec<String>>()
+    );
+    constructor_args.push(format!("{}::Which::{}", &idiomatic_class, &f.name().to_upper_camel_case(&[]))); // #IDIOMATIC_ENUMERANT (i.e. "which")
+    constructor_args.push(codegen_field_getter(f));
+
     stages.push(
         indoc!(
             "return #IDIOMATIC_CLASS(
-                #IDIOMATIC_ENUMERANT,
-                #FIELD_DESERIALIZER
+                #ARGS
             );"
         )
         .replace("#IDIOMATIC_CLASS", &idiomatic_class)
-        .replace("#IDIOMATIC_ENUMERANT", &format!("{}::Which::{}", &idiomatic_class, &f.name().to_upper_camel_case(&[])))
-        .replace("#FIELD_DESERIALIZER", &codegen_field_getter(f))
+        .replace(
+            "#ARGS",
+            &constructor_args
+                .join(",\n")
+                .replace("\n", "\n    ")
+        )
     );
 
     indoc!(
@@ -112,6 +126,7 @@ fn codegen_union_serialization(ctx: &Context, u: &ast::UnnamedUnion, idiomatic_c
 
 fn codegen_union_deserialization(
     ctx: &Context,
+    c: &ast::Class,
     u: &ast::UnnamedUnion,
     idiomatic_class: &String,
     capnp_class:& String
@@ -125,7 +140,7 @@ fn codegen_union_deserialization(
         "#FIELDS",
         &u.fields()
             .iter()
-            .map(|f| codegen_union_field_constructor(ctx, f, idiomatic_class, capnp_class))
+            .map(|f| codegen_union_field_constructor(ctx, c, f, idiomatic_class, capnp_class))
             .collect::<Vec<String>>()
             .join("\n")
             .replace("\n", "\n    ")
@@ -202,6 +217,7 @@ fn codegen_class(ctx: &Context, c: &ast::Class) -> Vec<String> {
         if let Some(u) = c.union() {
             codegen_union_deserialization(
                 ctx,
+                c,
                 u, 
                 &idiomatic_class,
                 &ctx.capnp_names().get(c.id()).unwrap().to_string()

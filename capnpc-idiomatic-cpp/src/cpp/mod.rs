@@ -6,7 +6,7 @@ use std::path::Path;
 
 pub fn code_gen(out_dir: &Path, cgr: &crate::parser::ast::CodeGeneratorRequest) -> codegen::Code {
     // Use this to view the cgr for debugging.
-    //println!("{:#?}", cgr);
+    println!("{:#?}", cgr);
 
     let mut translation_ctx = translator::Context::new(&out_dir.to_path_buf());
     translator::build_translation_context(&mut translation_ctx, &cgr);

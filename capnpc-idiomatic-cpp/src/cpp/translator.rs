@@ -246,12 +246,12 @@ fn generate_base_ast_type_for_node(ctx: &Context, cgr: &CodeGeneratorRequest, no
                     }
                 }
 
-                let union = UnnamedUnion::new(node.id(), union_fields);
                 let which = EnumClass::new(
                     generate_refid_for_union_which(node.id()),
                     Name::from("Which"),
-                    fields.iter().map(translate_parser_field_to_enumerant).collect()
+                    union_fields.iter().map(|f| f.name().clone()).collect()
                 );
+                let union = UnnamedUnion::new(node.id(), union_fields);
                 inner_types.push(ComplexTypeDef::EnumClass(which));
                 
                 return ComplexTypeDef::Class(Class::new(

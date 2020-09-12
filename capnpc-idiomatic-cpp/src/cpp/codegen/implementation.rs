@@ -152,6 +152,15 @@ fn codegen_clone_union_case(ctx: &Context, c: &ast::Class, f: &ast::Field) -> St
         }
         .replace("#AS_CONVERSION", &f.name().with_prepended("as").to_lower_camel_case(&[]));
     
+    let mut field_clones =
+        c.fields()
+            .iter()
+            .filter(|f| match c.union() { Some(_) => f.name().to_string() != String::from("which"), None => true })
+            .map(|f| codegen_clone_field(ctx, f))
+            .collect::<Vec<String>>();
+    field_clones.push("_which".to_string());
+    field_clones.push(conversion);
+
     let vector_field_clone =
         match f.cpp_type() {
             ast::CppType::Vector(t) => 
@@ -168,15 +177,14 @@ fn codegen_clone_union_case(ctx: &Context, c: &ast::Class, f: &ast::Field) -> St
         "case #IDIOMATIC_CLASS::Which::#ENUMERANT: {
             #VECTOR_FIELD_CLONE
             return #IDIOMATIC_CLASS(
-                _which,
-                #AS_CONVERSION
+                #ARGS
             );
         }"
     )
     .replace("#IDIOMATIC_CLASS", &idiomatic_class)
     .replace("#ENUMERANT", &f.name().to_upper_camel_case(&[]))
     .replace("#VECTOR_FIELD_CLONE", &vector_field_clone.replace("\n", "\n    "))
-    .replace("#AS_CONVERSION", &conversion)
+    .replace("#ARGS", &field_clones.join(",\n        "))
 }
 
 fn codegen_clone_union(ctx: &Context, c: &ast::Class, u: &ast::UnnamedUnion) -> String {
