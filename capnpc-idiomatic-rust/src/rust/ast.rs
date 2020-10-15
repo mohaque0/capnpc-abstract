@@ -1389,17 +1389,27 @@ impl ToCode for Impl {
                 Type::RefId(_) => panic!("RefIds should be resolved before turning into code."),
                 Type::RefName(_, type_def) => {
                     if let TypeDef::Enum(e) = type_def {
-                        if e.enum_origin() == EnumOrigin::WhichForPartialUnion {
-                            return format!(
-                                "self.{}().write_to(&mut dst.reborrow());",
-                                f.name.to_snake_case(RESERVED)
-                            )
-                        } else {
-                            return format!(
-                                "dst.reborrow().{}(self.{}().convert());",
-                                f.name.with_prepended("set").to_snake_case(RESERVED),
-                                f.name.to_snake_case(RESERVED)
-                            )
+                        match e.enum_origin() {
+                            EnumOrigin::WhichForPartialUnion => {
+                                return format!(
+                                    "self.{}().write_to(&mut dst.reborrow());",
+                                    f.name.to_snake_case(RESERVED)
+                                )
+                            },
+                            EnumOrigin::Enum => {
+                                return format!(
+                                    "dst.reborrow().{}(self.{}().convert());",
+                                    f.name.with_prepended("set").to_snake_case(RESERVED),
+                                    f.name.to_snake_case(RESERVED)
+                                )
+                            },
+                            EnumOrigin::Struct => {
+                                return format!(
+                                    "self.{}().write_to(&mut dst.reborrow().{}());",
+                                    f.name.to_snake_case(RESERVED),
+                                    f.name.with_prepended("init").to_snake_case(RESERVED)
+                                )
+                            }
                         }
                     }
 
