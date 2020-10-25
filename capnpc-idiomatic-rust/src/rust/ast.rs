@@ -998,11 +998,22 @@ impl ToCode for Impl {
         // Reading Functions
         //
 
-        fn enumerant_to_read_case(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
+        fn enumerant_to_read_case_for_basic_enum_enumerant(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
             return match &enumerant.rust_type() {
                 Type::Unit =>
                     format!("#CAPNP_TYPE::#ENUMERANT_NAME => Ok(#IDIOMATIC_NAME::#ENUMERANT_NAME)")
                     .replace("#CAPNP_TYPE", capnp_enum_type.to_code().as_str())
+                    .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                    .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
+                _ => panic!("Complex type passed to enumerant_to_read_case_for_basic_enum_enumerant.")
+            }
+        }
+
+        fn enumerant_to_read_case(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
+            return match &enumerant.rust_type() {
+                Type::Unit =>
+                    format!("Ok(#CAPNP_WHICH::#ENUMERANT_NAME(())) => Ok(#IDIOMATIC_NAME::#ENUMERANT_NAME)")
+                    .replace("#CAPNP_WHICH", capnp_enum_type.with(&Name::from(&String::from("Which"))).to_code().as_str())
                     .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
                     .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
                 Type::List(t) => 
@@ -1060,7 +1071,7 @@ impl ToCode for Impl {
                     "#ENUMERANTS",
                     e.enumerants()
                         .iter()
-                        .map(|enumerant| enumerant_to_read_case(enumerant, e.capnp_type_name(), &idiomatic_type))
+                        .map(|enumerant| enumerant_to_read_case_for_basic_enum_enumerant(enumerant, e.capnp_type_name(), &idiomatic_type))
                         .collect::<Vec<String>>()
                         .join(",\n")
                         .replace("\n", "\n\t\t")
@@ -1268,12 +1279,25 @@ impl ToCode for Impl {
             }
         }
 
-        fn enumerant_to_write_case(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
+        fn enumerant_to_convert_case(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
             return match &enumerant.rust_type() {
                 Type::Unit =>
                     format!("#IDIOMATIC_NAME::#ENUMERANT_NAME => #CAPNP_TYPE::#ENUMERANT_NAME")
                     .replace("#CAPNP_TYPE", capnp_enum_type.to_code().as_str())
                     .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                    .replace("#ENUMERANT_SET_NAME", enumerant.name().with_prepended("set").to_snake_case(RESERVED).as_str())
+                    .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
+                _ => { panic!("Attempting to use convert trait for a complex type."); }
+            }
+        }
+
+        fn enumerant_to_write_case(enumerant: &Enumerant, capnp_enum_type: &FullyQualifiedName, idiomatic_type: &FullyQualifiedName) -> String {
+            return match &enumerant.rust_type() {
+                Type::Unit =>
+                    format!("#IDIOMATIC_NAME::#ENUMERANT_NAME => dst.reborrow().#ENUMERANT_SET_NAME(())")
+                    .replace("#CAPNP_TYPE", capnp_enum_type.to_code().as_str())
+                    .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                    .replace("#ENUMERANT_SET_NAME", enumerant.name().with_prepended("set").to_snake_case(RESERVED).as_str())
                     .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
                 Type::List(t) => 
                     indoc!(
@@ -1295,9 +1319,10 @@ impl ToCode for Impl {
                     .replace("#DATA_TYPE", (*t).to_code().as_str()),
                 Type::String =>
                     indoc!(
-                        "#IDIOMATIC_NAME::#ENUMERANT_NAME(data) => dst.reborrow().set_resource(data.as_str())"
+                        "#IDIOMATIC_NAME::#ENUMERANT_NAME(data) => dst.reborrow().#ENUMERANT_SET_NAME(data.as_str())"
                     )
                     .replace("#ENUMERANT_NAME", enumerant.name().to_camel_case(RESERVED).as_str())
+                    .replace("#ENUMERANT_SET_NAME", enumerant.name().with_prepended("set").to_snake_case(RESERVED).as_str())
                     .replace("#IDIOMATIC_NAME", idiomatic_type.to_code().as_str()),
                 Type::RefName(_, typedef) =>
                     if typedef.is_simple_enum() {
@@ -1341,7 +1366,7 @@ impl ToCode for Impl {
                     "#ENUMERANTS",
                     e.enumerants()
                         .iter()
-                        .map(|enumerant| enumerant_to_write_case(enumerant, e.capnp_type_name(), &idiomatic_type))
+                        .map(|enumerant| enumerant_to_convert_case(enumerant, e.capnp_type_name(), &idiomatic_type))
                         .collect::<Vec<String>>()
                         .join(",\n")
                         .replace("\n", "\n\t\t")
