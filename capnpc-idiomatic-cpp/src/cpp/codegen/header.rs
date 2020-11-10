@@ -458,6 +458,38 @@ fn codegen_namespace(ctx: &Context, name: &ast::Name, namespace: &ast::Namespace
     .replace("#CONTENTS", &codegen_namespace_contents(&ctx.with_child_namespace(name), namespace))
 }
 
+pub fn codegen_type_definition_prototype(def: &ast::ComplexTypeDef) -> String {
+    match def {
+        ast::ComplexTypeDef::EnumClass(e) => {
+            format!("enum class {};", e.name().to_upper_camel_case(&[]))
+        }
+        ast::ComplexTypeDef::Class(c) => {
+            format!("class {};", c.name().to_upper_camel_case(&[]))
+        }
+    }
+}
+
+pub fn codegen_namespace_prototypes(ctx: &Context, name: &ast::Name, namespace: &ast::Namespace) -> String {
+    indoc!(
+        "namespace #NAME {
+        #CONTENTS
+        } // namespace #NAME
+        "
+    )
+    .replace("#NAME", &name.to_string())
+    .replace("#CONTENTS", &codegen_namespace_content_prototypes(&ctx.with_child_namespace(name), namespace))
+}
+
+pub fn codegen_namespace_content_prototypes(ctx: &Context, namespace: &ast::Namespace) -> String {
+    let mut ret = vec![];
+    ret.extend(namespace.defs().iter().map(codegen_type_definition_prototype).collect::<Vec<String>>());
+    ret.extend(namespace.namespaces()
+        .iter()
+        .map(|(name, namespace)| {codegen_namespace_prototypes(&ctx.with_child_namespace(name), name, namespace)}).collect::<Vec<String>>()
+    );
+    ret.join("\n")
+}
+
 pub fn codegen_header_file(ctx: &Context, compilation_unit: &ast::CompilationUnit) -> (PathBuf, String) {
     let mut path = ctx.out_dir().clone();
     path.push(format!("{}.{}", compilation_unit.name().to_string(), compilation_unit.ext()));
@@ -466,6 +498,8 @@ pub fn codegen_header_file(ctx: &Context, compilation_unit: &ast::CompilationUni
         "#pragma once
         
         #IMPORTS
+
+        #PROTOTYPES
         
         #DEFINITIONS"
     )
@@ -476,6 +510,10 @@ pub fn codegen_header_file(ctx: &Context, compilation_unit: &ast::CompilationUni
                 .map(|it| codegen_import(it))
                 .collect::<Vec<String>>()
                 .join("\n")
+        )
+        .replace(
+            "#PROTOTYPES",
+            &codegen_namespace_content_prototypes(ctx, &compilation_unit.namespace())
         )
         .replace(
             "#DEFINITIONS",
