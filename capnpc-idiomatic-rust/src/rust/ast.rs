@@ -933,8 +933,9 @@ impl ToCode for Enum {
 impl ToCode for Field {
     fn to_code(&self) -> String {
         format!(
-            "{}\n{}: {}",
-            if self.rust_type().is_primitive() { "#[get_copy = \"pub\"]" } else { "#[get = \"pub\"]" },
+            "#[getset({} = \"pub\", set = \"pub\"{})]\n{}: {}",
+            if self.rust_type().is_primitive() { "get_copy" } else { "get" },
+            if self.rust_type().is_primitive() { "" } else { ", get_mut = \"pub\"" },
             self.name().to_snake_case(RESERVED),
             self.rust_type().to_code()
         )
