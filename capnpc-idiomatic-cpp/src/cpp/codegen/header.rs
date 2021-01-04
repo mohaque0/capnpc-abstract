@@ -23,7 +23,10 @@ fn codegen_field(ctx: &Context, f: &ast::Field) -> String {
 }
 
 fn codegen_field_getter_prototype(ctx: &Context, f: &ast::Field) -> String {
-    indoc!("const #TYPE #GETTER() const;")
+    indoc!("
+        const #TYPE #GETTER() const;
+        #TYPE #GETTER();
+    ")
     .replace("#TYPE", &codegen_type_as_ref_if_complex(ctx, f.cpp_type()))
     .replace("#GETTER", &f.name().to_lower_camel_case(&[]))
 }
@@ -41,7 +44,10 @@ fn codegen_union_getter_prototypes(ctx: &Context, u_option: &Option<ast::Unnamed
             u.fields()
                 .iter()
                 .map(|f| {
-                    indoc!("const #TYPE& #GETTER() const;")
+                    indoc!("
+                        const #TYPE& #GETTER() const;
+                        #TYPE& #GETTER();
+                    ")
                     .replace("#TYPE", &codegen_cpp_type(ctx, f.cpp_type()))
                     .replace("#GETTER", &f.name().with_prepended("as").to_lower_camel_case(&[]))
                 })

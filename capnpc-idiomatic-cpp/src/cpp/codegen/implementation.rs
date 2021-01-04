@@ -301,6 +301,18 @@ fn codegen_field_getter(ctx: &Context, c: &ast::Class, f: &ast::Field) -> String
     .replace("#FIELD", &f.name().to_string())
 }
 
+fn codegen_field_getter_non_const(ctx: &Context, c: &ast::Class, f: &ast::Field) -> String {
+    indoc!("
+    #TYPE #NAMESPACE::#CLASS_NAME::#FIELD() {
+        return _#FIELD;
+    }
+    ")
+    .replace("#TYPE", &codegen_type_as_ref_if_complex(ctx, f.cpp_type()))
+    .replace("#NAMESPACE", &ctx.current_namespace().to_string())
+    .replace("#CLASS_NAME", &c.name().to_string())
+    .replace("#FIELD", &f.name().to_string())
+}
+
 fn codegen_field_setter(ctx: &Context, c: &ast::Class, f: &ast::Field) -> String {
     indoc!("
     #NAMESPACE::#CLASS_NAME& #NAMESPACE::#CLASS_NAME::#FIELD(#TYPE val) {
@@ -318,6 +330,19 @@ fn codegen_field_setter(ctx: &Context, c: &ast::Class, f: &ast::Field) -> String
 fn codegen_union_field_getter(ctx: &Context, c: &ast::Class, f: &ast::Field, field_idx: usize) -> String {
     indoc!("
     const #TYPE #NAMESPACE::#CLASS_NAME::#METHOD_NAME() const {
+        return std::get<#FIELD_INDEX>(_whichData);
+    }
+    ")
+    .replace("#TYPE", &codegen_type_as_ref_if_complex(ctx, f.cpp_type()))
+    .replace("#NAMESPACE", &ctx.current_namespace().to_string())
+    .replace("#CLASS_NAME", &c.name().to_string())
+    .replace("#METHOD_NAME", &f.name().with_prepended("as").to_lower_camel_case(&[]).to_string())
+    .replace("#FIELD_INDEX", &field_idx.to_string())
+}
+
+fn codegen_union_field_getter_non_const(ctx: &Context, c: &ast::Class, f: &ast::Field, field_idx: usize) -> String {
+    indoc!("
+    #TYPE #NAMESPACE::#CLASS_NAME::#METHOD_NAME() {
         return std::get<#FIELD_INDEX>(_whichData);
     }
     ")
@@ -349,6 +374,7 @@ fn codegen_field_accessors(ctx: &Context, c: &ast::Class) -> Vec<String> {
 
     for f in c.fields() {
         ret.push(codegen_field_getter(ctx, c, f));
+        ret.push(codegen_field_getter_non_const(ctx, c, f));
         if f.name().to_string() != "which" {
             ret.push(codegen_field_setter(ctx, c, f));
         }
@@ -357,6 +383,7 @@ fn codegen_field_accessors(ctx: &Context, c: &ast::Class) -> Vec<String> {
     if let Some(u) = c.union() {
         for (i,f) in u.fields().iter().enumerate() {
             ret.push(codegen_union_field_getter(ctx, c, f, i));
+            ret.push(codegen_union_field_getter_non_const(ctx, c, f, i));
             ret.push(codegen_union_field_setter(ctx, c, f, i));
         }
     }
