@@ -79,12 +79,16 @@ fn codegen_move_constructor(ctx: &Context, c: &ast::Class) -> String {
     }
 
     indoc!(
-        "#TYPE::#NAME(#TYPE&& other) :
+        "#TYPE::#NAME(#TYPE&& other) #FIELDS_LIST_START
             #FIELD_ASSIGNMENTS
         {}"
     )
     .replace("#TYPE", &ctx.current_namespace().with_appended(c.name()).to_string())
     .replace("#NAME", &c.name().to_string())
+    .replace(
+        "#FIELDS_LIST_START",
+        if field_assignments.len() > 0 { ":" } else { "" }
+    )
     .replace(
         "#FIELD_ASSIGNMENTS",
         &field_assignments.join(",\n    ")
@@ -95,7 +99,7 @@ fn codegen_constructor(ctx: &Context, c: &ast::Class, fields: &Vec<ast::Field>) 
     indoc!("
     #TYPE::#NAME(
         #ARGS
-    ) :
+    ) #FIELDS_LIST_START
         #FIELDS
     {}")
     .replace("#TYPE", &ctx.current_namespace().with_appended(c.name()).to_string())
@@ -103,6 +107,10 @@ fn codegen_constructor(ctx: &Context, c: &ast::Class, fields: &Vec<ast::Field>) 
     .replace(
         "#ARGS",
         &fields.iter().map(|f| codegen_constructor_arg(ctx, f)).collect::<Vec<String>>().join(",\n    ")
+    )
+    .replace(
+        "#FIELDS_LIST_START",
+        if fields.len() > 0 { ":" } else { "" }
     )
     .replace(
         "#FIELDS",
