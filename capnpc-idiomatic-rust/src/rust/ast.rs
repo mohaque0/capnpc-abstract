@@ -465,6 +465,16 @@ impl Translator<crate::parser::ast::Node> for TypeDef  {
             &crate::parser::ast::node::Which::Struct { discriminant_count, fields, .. } => {
                 let name = ctx.names().get(&n.id()).unwrap().clone();
 
+                if fields.len() == 0 {
+                    return TypeDef::Struct(Struct::new(
+                        n.id(),
+                        name.clone(),
+                        ctx.generate_fully_qualified_type_name(&name),
+                        ctx.generate_capnp_type_name(&name),
+                        vec![]
+                    ))
+                }
+
                 // Use a Rust enum here.
                 if *discriminant_count as usize == fields.len() {
                     return TypeDef::Enum(Enum::new(
