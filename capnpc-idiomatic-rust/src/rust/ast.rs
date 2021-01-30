@@ -955,7 +955,7 @@ impl ToCode for Field {
 impl ToCode for Struct {
     fn to_code(&self) -> String {
         return format!(
-            "#[derive(Clone, Constructor, Getters, CopyGetters, Setters, Debug, PartialEq)]\n\
+            "#[derive(Clone, Constructor, Getters, CopyGetters, MutGetters, Setters, Debug, PartialEq)]\n\
             pub struct {} {{\n\t{}\n}}",
             self.name().to_camel_case(RESERVED),
             self.fields()
